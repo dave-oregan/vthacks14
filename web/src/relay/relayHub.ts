@@ -222,7 +222,7 @@ export class RelayHub extends EventEmitter {
         jpeg: packet.payload,
       };
       this.emit("video", frame);
-      this.emit("status", this.session);
+      // Do not emit status on every video frame — that floods the dashboard.
       return;
     }
 

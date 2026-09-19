@@ -2,34 +2,19 @@ import * as tf from "@tensorflow/tfjs";
 import "@tensorflow/tfjs-backend-cpu";
 import * as cocoSsd from "@tensorflow-models/coco-ssd";
 import sharp from "sharp";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { config } from "../config.js";
+import { generateWithFallback, hasGemini } from "../gemini/client.js";
 import type { BBox, Detection } from "../shared/types.js";
 import { normalizeLabel } from "../memory/store.js";
-import { v4 as uuid } from "uuid";
 
-const INTERESTING = new Set([
-  "cell phone",
-  "phone",
-  "laptop",
-  "backpack",
-  "handbag",
-  "book",
-  "bottle",
-  "cup",
-  "keyboard",
-  "mouse",
-  "remote",
-  "tv",
-  "person",
-  "chair",
-  "couch",
-  "bed",
-  "umbrella",
-  "suitcase",
-  "tie",
-  "clock",
-]);
+/**
+ * lite_mobilenet_v2 is the default coco-ssd browser demo model — solid for phones/laptops
+ * and much faster on CPU than full mobilnet_v2 (keeps stream smooth).
+ */
+const COCO_BASE: "mobilenet_v2" | "lite_mobilenet_v2" = "lite_mobilenet_v2";
+const VISION_MAX_WIDTH = 512;
+const PREVIEW_MAX_WIDTH = 640;
+const PREVIEW_QUALITY = 55;
 
 let modelPromise: Promise<cocoSsd.ObjectDetection> | null = null;
 
@@ -38,8 +23,8 @@ async function getModel(): Promise<cocoSsd.ObjectDetection> {
     modelPromise = (async () => {
       await tf.setBackend("cpu");
       await tf.ready();
-      console.log("[vision] loading COCO-SSD…");
-      const model = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+      console.log(`[vision] loading COCO-SSD (${COCO_BASE})…`);
+      const model = await cocoSsd.load({ base: COCO_BASE });
       console.log("[vision] COCO-SSD ready");
       return model;
     })();
@@ -47,93 +32,126 @@ async function getModel(): Promise<cocoSsd.ObjectDetection> {
   return modelPromise;
 }
 
+/** Downscale JPEG for live Mission Control preview (keeps UI responsive). */
+export async function makePreviewJpeg(jpeg: Buffer): Promise<Buffer> {
+  return sharp(jpeg)
+    .rotate()
+    .resize({ width: PREVIEW_MAX_WIDTH, withoutEnlargement: true })
+    .jpeg({ quality: PREVIEW_QUALITY, mozjpeg: true })
+    .toBuffer();
+}
+
 export async function detectObjects(jpeg: Buffer): Promise<Detection[]> {
-  const { data, info } = await sharp(jpeg)
+  const resized = await sharp(jpeg)
+    .rotate()
+    .resize({ width: VISION_MAX_WIDTH, withoutEnlargement: true })
     .removeAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
 
+  const { data, info } = resized;
   const model = await getModel();
-  const tensor = tf.tensor3d(new Uint8Array(data), [info.height, info.width, 3]);
+  const tensor = tf.tensor3d(new Uint8Array(data), [info.height, info.width, 3], "int32");
 
   try {
-    const predictions = await model.detect(tensor as unknown as ImageData);
-    return predictions
-      .filter((p) => p.score >= config.visionMinScore)
-      .filter((p) => INTERESTING.has(p.class.toLowerCase()) || p.score > 0.7)
-      .map((p) => {
-        const label = normalizeLabel(p.class);
-        const bbox: BBox = {
-          x: p.bbox[0] / info.width,
-          y: p.bbox[1] / info.height,
-          width: p.bbox[2] / info.width,
-          height: p.bbox[3] / info.height,
-        };
-        return {
-          trackId: `coco-${label}-${Math.round(bbox.x * 100)}-${Math.round(bbox.y * 100)}`,
-          label,
-          displayName: label,
-          descriptors: [label],
-          confidence: p.score,
-          bbox,
-          source: "coco" as const,
-        };
-      });
+    // Pass minScore into NMS so threshold actually affects which boxes survive.
+    const minScore = Math.min(0.5, Math.max(0.2, config.visionMinScore));
+    const predictions = await model.detect(tensor, 20, minScore);
+    return predictions.map((p, index) => toDetection(p, info.width, info.height, index));
   } finally {
     tensor.dispose();
   }
 }
 
+/**
+ * Enrich coco boxes with Gemini descriptors — never invents new boxes.
+ * (Full-scene Gemini boxes were misaligned and made recognition look broken.)
+ */
 export async function enrichWithGemini(
   jpeg: Buffer,
   detections: Detection[],
 ): Promise<Detection[]> {
-  if (!config.geminiApiKey || detections.length === 0) return detections;
+  if (!hasGemini() || detections.length === 0) return detections;
 
   try {
-    const genAI = new GoogleGenerativeAI(config.geminiApiKey);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
-      generationConfig: { responseMimeType: "application/json" },
-    });
+    const small = await sharp(jpeg)
+      .rotate()
+      .resize({ width: 640, withoutEnlargement: true })
+      .jpeg({ quality: 70 })
+      .toBuffer();
 
-    const b64 = jpeg.toString("base64");
-    const prompt = `You are SIGHTLINE vision. Given this first-person photo and these detections:
-${JSON.stringify(detections.map((d) => ({ label: d.label, confidence: d.confidence, bbox: d.bbox })))}
+    const prompt = `You are SIGHTLINE vision for AR glasses.
+Enrich EACH listed detection using the image. Do NOT add or remove objects.
+Keep bboxIndex order exactly.
 
-Return JSON: { "items": [ { "label": "phone|laptop|backpack|...", "displayName": "short name", "descriptors": ["black","case","leather",...], "confidence": 0.0-1.0, "bboxIndex": 0 } ] }
-Focus on distinctive appearance (color, case, brand cues, size). Prefer concrete phrases like "black case phone". Max 6 items.`;
+Detections:
+${JSON.stringify(
+  detections.map((d, i) => ({
+    bboxIndex: i,
+    label: d.label,
+    confidence: Number(d.confidence.toFixed(2)),
+    bbox: d.bbox,
+  })),
+)}
 
-    const result = await model.generateContent([
-      { text: prompt },
-      { inlineData: { mimeType: "image/jpeg", data: b64 } },
-    ]);
-    const text = result.response.text();
-    const parsed = JSON.parse(text) as {
+Return JSON only:
+{
+  "items": [
+    {
+      "bboxIndex": 0,
+      "label": "cell phone",
+      "displayName": "black silicone phone case",
+      "descriptors": ["black", "silicone", "phone", "case"]
+    }
+  ]
+}
+
+Rules:
+- One item per bboxIndex 0..${detections.length - 1}
+- label: keep the coco class unless clearly wrong (e.g. remote vs phone)
+- displayName: short human phrase (color + object)
+- descriptors: 2–5 appearance words`;
+
+    const text = await generateWithFallback(
+      [
+        { text: prompt },
+        { inlineData: { mimeType: "image/jpeg", data: small.toString("base64") } },
+      ],
+      { responseMimeType: "application/json" },
+    );
+
+    const parsed = JSON.parse(stripFence(text)) as {
       items?: Array<{
-        label: string;
+        bboxIndex?: number;
+        label?: string;
         displayName?: string;
         descriptors?: string[];
-        confidence?: number;
-        bboxIndex?: number;
       }>;
     };
 
-    return (parsed.items ?? []).map((item, i) => {
-      const base = detections[item.bboxIndex ?? i] ?? detections[0]!;
-      const label = normalizeLabel(item.label || base.label);
+    const byIndex = new Map<
+      number,
+      { label?: string; displayName?: string; descriptors?: string[] }
+    >();
+    for (const item of parsed.items ?? []) {
+      if (typeof item?.bboxIndex === "number") byIndex.set(item.bboxIndex, item);
+    }
+
+    return detections.map((det, i) => {
+      const enrich = byIndex.get(i);
+      if (!enrich) return det;
+      const label = enrich.label ? normalizeLabel(enrich.label) : det.label;
       const descriptors = unique([
-        ...(item.descriptors ?? []),
+        ...(enrich.descriptors ?? []),
+        enrich.displayName || "",
+        ...det.descriptors,
         label,
-        ...(item.displayName ? [item.displayName] : []),
       ]);
       return {
-        trackId: base.trackId || `gem-${uuid().slice(0, 8)}`,
+        ...det,
         label,
-        displayName: item.displayName || descriptors.slice(0, 3).join(" ") || label,
+        displayName: (enrich.displayName || det.displayName).trim(),
         descriptors,
-        confidence: item.confidence ?? base.confidence,
-        bbox: base.bbox,
         source: "gemini" as const,
       };
     });
@@ -148,21 +166,57 @@ export async function cropThumb(
   bbox: BBox,
 ): Promise<Buffer | null> {
   try {
-    const meta = await sharp(jpeg).metadata();
+    const rotated = sharp(jpeg).rotate();
+    const meta = await rotated.metadata();
     const w = meta.width ?? 1;
     const h = meta.height ?? 1;
     const left = Math.max(0, Math.floor(bbox.x * w));
     const top = Math.max(0, Math.floor(bbox.y * h));
     const width = Math.max(1, Math.min(w - left, Math.floor(bbox.width * w)));
     const height = Math.max(1, Math.min(h - top, Math.floor(bbox.height * h)));
-    return await sharp(jpeg)
+    return await rotated
       .extract({ left, top, width, height })
-      .resize(160, 160, { fit: "cover" })
-      .jpeg({ quality: 70 })
+      .resize(96, 96, { fit: "cover" })
+      .jpeg({ quality: 55 })
       .toBuffer();
   } catch {
     return null;
   }
+}
+
+function toDetection(
+  p: cocoSsd.DetectedObject,
+  width: number,
+  height: number,
+  index: number,
+): Detection {
+  const label = normalizeLabel(p.class);
+  const bbox: BBox = {
+    x: clamp01(p.bbox[0] / width),
+    y: clamp01(p.bbox[1] / height),
+    width: clamp01(p.bbox[2] / width),
+    height: clamp01(p.bbox[3] / height),
+  };
+  return {
+    trackId: `det-${index}-${label}-${Math.round(bbox.x * 40)}-${Math.round(bbox.y * 40)}`,
+    label,
+    displayName: label,
+    descriptors: [label],
+    confidence: p.score,
+    bbox,
+    source: "coco",
+  };
+}
+
+function stripFence(text: string): string {
+  const trimmed = text.trim();
+  const m = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
+  return (m?.[1] ?? trimmed).trim();
+}
+
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(1, Math.max(0, n));
 }
 
 function unique(items: string[]): string[] {

@@ -1,5 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { config } from "../config.js";
+import { generateWithFallback, hasGemini } from "./client.js";
 import { formatObjectPhrase, type MemoryStore } from "../memory/store.js";
 
 export async function answerRecallQuery(
@@ -32,20 +31,20 @@ export async function answerRecallQuery(
 
   let text = `Last seen: ${phrase}. Time: ${when}. Location: ${loc}. Sightings: ${best.sightingCount}.`;
 
-  if (config.geminiApiKey) {
+  if (hasGemini()) {
     try {
-      const genAI = new GoogleGenerativeAI(config.geminiApiKey);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-      const result = await model.generateContent(
-        `User asked: "${query}"\nMemory record: ${JSON.stringify({
-          phrase,
-          when,
-          loc,
-          status: best.status,
-          descriptors: best.descriptors,
-        })}\nReply in one short spoken sentence for SIGHTLINE glasses.`,
-      );
-      text = result.response.text().trim() || text;
+      const spoken = await generateWithFallback([
+        {
+          text: `User asked: "${query}"\nMemory record: ${JSON.stringify({
+            phrase,
+            when,
+            loc,
+            status: best.status,
+            descriptors: best.descriptors,
+          })}\nReply in one short spoken sentence for SIGHTLINE glasses.`,
+        },
+      ]);
+      text = spoken.trim() || text;
     } catch {
       /* keep template */
     }

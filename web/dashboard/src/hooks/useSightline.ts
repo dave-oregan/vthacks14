@@ -78,10 +78,23 @@ export function useSightline() {
                 ? {
                     ...prev,
                     latestFrameJpegBase64: frame.jpegBase64,
-                    latestDetections: frame.detections,
+                    latestDetections: frame.detections ?? prev.latestDetections,
                     session: frame.session ?? prev.session,
+                    live: Boolean(frame.session?.connected ?? prev.live),
                   }
-                : prev,
+                : {
+                    live: Boolean(frame.session?.connected),
+                    mode: "LIVE",
+                    transcriptSnippet: "",
+                    latestFrameJpegBase64: frame.jpegBase64,
+                    latestDetections: frame.detections ?? [],
+                    objects: [],
+                    events: [],
+                    missions: [],
+                    agents: [],
+                    lastAccessRequest: null,
+                    session: frame.session,
+                  },
             );
           }
         }

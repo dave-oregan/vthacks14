@@ -55,7 +55,7 @@ export function App() {
       </header>
 
       <div className="main">
-        <section className="panel">
+        <section className="panel pov-panel">
           <div className="panel-title">Live POV · detections</div>
           <LivePOV
             jpegBase64={state?.latestFrameJpegBase64 ?? null}

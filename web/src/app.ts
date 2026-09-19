@@ -1,9 +1,14 @@
 import { EventEmitter } from "node:events";
-import { v4 as uuid } from "uuid";
 import { config } from "./config.js";
 import { RelayHub, type RelayVideoFrame } from "./relay/relayHub.js";
 import { MemoryStore, formatObjectPhrase } from "./memory/store.js";
-import { detectObjects, enrichWithGemini, cropThumb } from "./vision/detector.js";
+import {
+  detectObjects,
+  enrichWithGemini,
+  cropThumb,
+  makePreviewJpeg,
+} from "./vision/detector.js";
+import { hasGemini } from "./gemini/client.js";
 import { answerRecallQuery } from "./gemini/reasoner.js";
 import { listDemoAgents, verifyAgentAccess } from "./ans/trustGate.js";
 import { speak } from "./voice/elevenlabs.js";
@@ -13,7 +18,6 @@ import type {
   GeoPoint,
   MemoryObject,
   Mission,
-  TimelineEvent,
 } from "./shared/types.js";
 
 export class SightlineApp extends EventEmitter {
@@ -21,6 +25,7 @@ export class SightlineApp extends EventEmitter {
   readonly store = new MemoryStore();
 
   private latestFrameJpeg: Buffer | null = null;
+  private latestPreviewJpeg: Buffer | null = null;
   private latestDetections: Detection[] = [];
   private frameCounter = 0;
   private visionBusy = false;
@@ -30,6 +35,9 @@ export class SightlineApp extends EventEmitter {
   private lastAccessRequest = null as DashboardState["lastAccessRequest"];
   private agentStates: DashboardState["agents"] = listDemoAgents();
   private placedAnchors = new Map<string, { location: GeoPoint; seenAtMs: number }>();
+  private lastPreviewSentAt = 0;
+  private lastStateBroadcastAt = 0;
+  private previewBusy = false;
 
   constructor() {
     super();
@@ -45,7 +53,7 @@ export class SightlineApp extends EventEmitter {
         sessionId: this.relay.getSession()?.sessionId,
         description: "iOS Link connected (hello)",
       });
-      this.broadcast();
+      this.broadcast(true);
     });
 
     this.relay.on("location", (geo: GeoPoint & { sessionId: string }) => {
@@ -57,7 +65,7 @@ export class SightlineApp extends EventEmitter {
       this.latestFrameJpeg = frame.jpeg;
       this.frameCounter += 1;
       this.mode = "LIVE";
-      this.broadcastFrame();
+      void this.maybeBroadcastPreview();
       if (this.frameCounter % config.visionEveryNFrames === 0) {
         void this.runVision(frame);
       }
@@ -70,64 +78,91 @@ export class SightlineApp extends EventEmitter {
         sessionId: e.sessionId,
         description: `Stream: ${e.event}`,
       });
-      this.broadcast();
+      this.broadcast(true);
     });
 
     this.relay.on("disconnected", () => {
       this.mode = "DISCONNECTED";
-      this.broadcast();
+      this.broadcast(true);
     });
 
+    // Lightweight status — throttled, never includes full-res JPEG spam.
     this.relay.on("status", () => this.broadcast());
+  }
+
+  private async maybeBroadcastPreview(): Promise<void> {
+    const minInterval = 1000 / Math.max(1, config.previewMaxFps);
+    const now = Date.now();
+    if (this.previewBusy || now - this.lastPreviewSentAt < minInterval) return;
+    if (!this.latestFrameJpeg) return;
+
+    this.previewBusy = true;
+    this.lastPreviewSentAt = now;
+    try {
+      this.latestPreviewJpeg = await makePreviewJpeg(this.latestFrameJpeg);
+      this.emit("frame", {
+        jpegBase64: this.latestPreviewJpeg.toString("base64"),
+        detections: this.latestDetections,
+        session: this.relay.getSession(),
+      });
+    } catch (err) {
+      console.warn("[preview] failed:", err instanceof Error ? err.message : err);
+    } finally {
+      this.previewBusy = false;
+    }
   }
 
   private async runVision(frame: RelayVideoFrame): Promise<void> {
     if (this.visionBusy) return;
     this.visionBusy = true;
     try {
+      // COCO owns boxes (accurate). Gemini only adds display names / descriptors.
       let detections = await detectObjects(frame.jpeg);
       this.geminiCounter += 1;
-      if (config.geminiApiKey && this.geminiCounter % 4 === 0) {
+      if (hasGemini() && this.geminiCounter % config.geminiEveryNVisionPasses === 0) {
         detections = await enrichWithGemini(frame.jpeg, detections);
       }
       this.latestDetections = detections;
       this.relay.markVisioned();
 
       const location = this.relay.getSession()?.lastLocation ?? null;
-      for (const det of detections) {
-        if (det.label === "person") continue;
-        const thumb = await cropThumb(frame.jpeg, det.bbox);
-        const { object, isNew } = this.store.upsertSighting({
-          label: det.label,
-          descriptors: det.descriptors.length ? det.descriptors : [det.displayName, det.label],
-          confidence: det.confidence,
-          bbox: det.bbox,
-          location,
-          thumbJpeg: thumb,
-          sessionId: frame.sessionId,
-          timestampMs: frame.timestampMs,
-        });
-
-        if (location) {
-          this.placedAnchors.set(object.id, {
+      // Persist all non-person detections in parallel (multi-object memory).
+      const toStore = detections.filter((d) => d.label !== "person");
+      await Promise.all(
+        toStore.map(async (det) => {
+          const thumb =
+            det.confidence >= 0.5 ? await cropThumb(frame.jpeg, det.bbox) : null;
+          const { object, isNew } = this.store.upsertSighting({
+            label: det.label,
+            descriptors: det.descriptors.length
+              ? det.descriptors
+              : [det.displayName, det.label],
+            confidence: det.confidence,
+            bbox: det.bbox,
             location,
-            seenAtMs: frame.timestampMs,
-          });
-        }
-
-        if (isNew) {
-          this.store.addEvent({
-            type: "object_seen",
-            timestampMs: frame.timestampMs,
+            thumbJpeg: thumb,
             sessionId: frame.sessionId,
-            subjectObjectId: object.id,
-            description: `Seen ${formatObjectPhrase(object)}`,
-            frameRef: `frame:${frame.sequence}`,
-            location,
+            timestampMs: frame.timestampMs,
           });
-        } else {
-          // periodic refresh event sparingly
-          if (object.sightingCount % 15 === 0) {
+
+          if (location) {
+            this.placedAnchors.set(object.id, {
+              location,
+              seenAtMs: frame.timestampMs,
+            });
+          }
+
+          if (isNew) {
+            this.store.addEvent({
+              type: "object_seen",
+              timestampMs: frame.timestampMs,
+              sessionId: frame.sessionId,
+              subjectObjectId: object.id,
+              description: `Seen ${formatObjectPhrase(object)}`,
+              frameRef: `frame:${frame.sequence}`,
+              location,
+            });
+          } else if (object.sightingCount % 25 === 0) {
             this.store.addEvent({
               type: "object_seen",
               timestampMs: frame.timestampMs,
@@ -137,10 +172,16 @@ export class SightlineApp extends EventEmitter {
               location,
             });
           }
-        }
-      }
+        }),
+      );
 
       await this.syncTrackMissions(detections, location, frame.sessionId);
+      // Push detections quickly via frame channel; full state less often.
+      this.emit("frame", {
+        jpegBase64: this.latestPreviewJpeg?.toString("base64") ?? null,
+        detections: this.latestDetections,
+        session: this.relay.getSession(),
+      });
       this.broadcast();
     } catch (err) {
       console.warn("[vision] pipeline error:", err instanceof Error ? err.message : err);
@@ -308,12 +349,13 @@ export class SightlineApp extends EventEmitter {
     return {
       live: Boolean(this.relay.getSession()?.connected),
       session: this.relay.getSession(),
-      latestFrameJpegBase64: this.latestFrameJpeg
-        ? this.latestFrameJpeg.toString("base64")
+      // Preview-sized JPEG only — never the full camera frame.
+      latestFrameJpegBase64: this.latestPreviewJpeg
+        ? this.latestPreviewJpeg.toString("base64")
         : null,
       latestDetections: this.latestDetections,
       objects: this.store.listObjects().map(objectWithThumb) as unknown as MemoryObject[],
-      events: this.store.listEvents(80),
+      events: this.store.listEvents(40),
       missions: this.store.listMissions(),
       agents: this.agentStates,
       lastAccessRequest: this.lastAccessRequest,
@@ -322,16 +364,11 @@ export class SightlineApp extends EventEmitter {
     };
   }
 
-  private broadcast(): void {
+  private broadcast(force = false): void {
+    const now = Date.now();
+    if (!force && now - this.lastStateBroadcastAt < 400) return;
+    this.lastStateBroadcastAt = now;
     this.emit("dashboard", this.getDashboardState());
-  }
-
-  private broadcastFrame(): void {
-    this.emit("frame", {
-      jpegBase64: this.latestFrameJpeg?.toString("base64") ?? null,
-      detections: this.latestDetections,
-      session: this.relay.getSession(),
-    });
   }
 }
 
