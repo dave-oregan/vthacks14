@@ -26,6 +26,7 @@
 		3FAD4F05656A6E7947D57B6C /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = 9AEEE465CF2F7983C43BC00F /* MWDATCamera */; };
 		3FD79EC1F981079FB0432597 /* ConnectionStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA34CF03F7A7264E3495264A /* ConnectionStatusView.swift */; };
 		492AA203670DEFEA3D010AB1 /* Time.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A9139A164CF12B0060540B /* Time.swift */; };
+		4AB9283B8B08A97C98F2034F /* BackendDiscoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B004BE64BCDA90FB742AB0C /* BackendDiscoveryService.swift */; };
 		5096054A03F86C960F4FDE53 /* DebugLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAE18DC9287C1655141FB517 /* DebugLogView.swift */; };
 		6A1AF2AB5B94CAE2F519CFAF /* VideoPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F2C53BA0FF00EBA6F442AF9 /* VideoPreviewView.swift */; };
 		7A4518CAB86EEAD45FE2D424 /* StreamConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D661F0D868BE97FC04E0715 /* StreamConfiguration.swift */; };
@@ -59,6 +60,7 @@
 		1FDFA360D26B65FA6828DC92 /* SensorStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorStatusView.swift; sourceTree = "<group>"; };
 		2C9CF33419940760AB268BB7 /* TelemetryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryModels.swift; sourceTree = "<group>"; };
 		300A0E909DBB367DA67C3738 /* NetworkRelayService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkRelayService.swift; sourceTree = "<group>"; };
+		3B004BE64BCDA90FB742AB0C /* BackendDiscoveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendDiscoveryService.swift; sourceTree = "<group>"; };
 		3D3F43B85DF110710401F1A1 /* BackendConfigurationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendConfigurationView.swift; sourceTree = "<group>"; };
 		410275367EECC373536C73A4 /* SightlineLink.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SightlineLink.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4F2C53BA0FF00EBA6F442AF9 /* VideoPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPreviewView.swift; sourceTree = "<group>"; };
@@ -129,6 +131,7 @@
 			isa = PBXGroup;
 			children = (
 				EC2F605DE2E1D6E4E8395DE5 /* AudioCaptureService.swift */,
+				3B004BE64BCDA90FB742AB0C /* BackendDiscoveryService.swift */,
 				988F25A1BD8E340127983D75 /* GlassesVideoService.swift */,
 				D4EEFB569300F61CDAFC0EB3 /* LocationService.swift */,
 				648B73C32EE9F9FACEE779AE /* MetaWearablesService.swift */,
@@ -313,6 +316,7 @@
 				9647FC47B00F90CBDC0B6A08 /* AppState.swift in Sources */,
 				1D4B8EE1D5E5468A2C8937BA /* AudioCaptureService.swift in Sources */,
 				F8A9F506EDC79F84EAFC996E /* BackendConfigurationView.swift in Sources */,
+				4AB9283B8B08A97C98F2034F /* BackendDiscoveryService.swift in Sources */,
 				F260A30E79B7E7F1A72379ED /* BinaryPacketEncoder.swift in Sources */,
 				1639D4DC76373BF0935CFC3C /* ConnectionState.swift in Sources */,
 				3FD79EC1F981079FB0432597 /* ConnectionStatusView.swift in Sources */,

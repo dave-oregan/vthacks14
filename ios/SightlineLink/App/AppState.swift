@@ -17,9 +17,38 @@ final class AppState: ObservableObject {
     }
 
     func handleOpenURL(_ url: URL) {
+        // Pairing deep link from Mission Control QR:
+        // sightlinelink://link?host=192.168.1.5&port=8000&autoStart=1
+        if handlePairingURL(url) {
+            return
+        }
         Task {
             await coordinator.meta.handleCallbackURL(url)
         }
+    }
+
+    @discardableResult
+    func handlePairingURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "sightlinelink" else { return false }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return false
+        }
+
+        // Accept sightlinelink://link?... or sightlinelink://...?host=...
+        let hostComponent = (components.host ?? "").lowercased()
+        let path = components.path.lowercased()
+        let items = components.queryItems ?? []
+        let hasHostParam = items.contains { $0.name == "host" && !($0.value ?? "").isEmpty }
+        let looksLikePairing = hostComponent == "link" || path.contains("link") || hasHostParam
+        guard looksLikePairing, hasHostParam else { return false }
+
+        guard let host = items.first(where: { $0.name == "host" })?.value, !host.isEmpty else {
+            return false
+        }
+        let port = Int(items.first(where: { $0.name == "port" })?.value ?? "8000") ?? 8000
+        let autoStart = (items.first(where: { $0.name == "autoStart" })?.value ?? "1") != "0"
+        coordinator.applyBackendLink(host: host, port: port, autoStart: autoStart)
+        return true
     }
 
     var debugLogText: String {
@@ -48,6 +77,7 @@ final class AppState: ObservableObject {
         lines.append("deviceMotionAvailable=\(c.motion.isAvailable)")
         lines.append("motionUpdateRate=\(String(format: "%.1f", c.motion.updateRateHz))")
         lines.append("networkPath=\(c.networkMonitor.interfaceType) connected=\(c.networkMonitor.isConnected)")
+        lines.append("discovered=\(c.discovery.backends.map(\.id).joined(separator: ","))")
         lines.append("lastError=\(c.lastError ?? c.meta.lastError ?? "none")")
         lines.append("--- log ---")
         lines.append(AppLog.debugSnapshot())

@@ -9,6 +9,7 @@ final class TelemetryCoordinator: ObservableObject {
     let location: LocationService
     let motion: MotionService
     let networkMonitor: NetworkMonitorService
+    let discovery = BackendDiscoveryService()
     let relay = NetworkRelayService()
 
     @Published var settings: StreamConfigurationSettings
@@ -46,8 +47,32 @@ final class TelemetryCoordinator: ObservableObject {
         }
         meta.configureSDK()
         networkMonitor.start()
+        discovery.start()
         wireHandlers()
         Task { await meta.refreshCameraPermission() }
+    }
+
+    /// Apply host/port from discovery or QR deep link.
+    func applyBackendLink(host: String, port: Int, autoStart: Bool) {
+        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, port > 0, port <= 65535 else {
+            statusMessage = "Invalid link target"
+            return
+        }
+        settings.backendHost = trimmed
+        settings.backendPort = port
+        settings.useSecureWebSocket = false
+        saveSettings()
+        statusMessage = "Linked to \(trimmed):\(port)"
+        AppLog.info("Applied backend link \(trimmed):\(port) autoStart=\(autoStart)")
+
+        if autoStart {
+            Task { await startRelay() }
+        }
+    }
+
+    func linkToDiscovered(_ backend: DiscoveredBackend, autoStart: Bool = true) {
+        applyBackendLink(host: backend.host, port: backend.port, autoStart: autoStart)
     }
 
     private func wireHandlersWithoutMeta() {

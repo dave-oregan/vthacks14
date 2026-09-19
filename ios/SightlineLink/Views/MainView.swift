@@ -12,9 +12,9 @@ struct MainView: View {
                     if coordinator.isRelaying {
                         liveBanner
                     }
+                    BackendConfigurationView()
                     mediaModePicker
                     ConnectionStatusView()
-                    BackendConfigurationView()
                     privacyToggles
                     SensorStatusView()
                     relayButton

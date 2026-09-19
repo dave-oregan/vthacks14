@@ -1,0 +1,78 @@
+import express from "express";
+import cors from "cors";
+import type { SightlineApp } from "../app.js";
+import { objectWithThumb } from "../app.js";
+import { config } from "../config.js";
+import { buildLinkInfo } from "../link/linkInfo.js";
+
+export function createApiRouter(app: SightlineApp) {
+  const router = express.Router();
+  router.use(cors());
+  router.use(express.json({ limit: "2mb" }));
+
+  router.get("/health", (_req, res) => {
+    res.json({
+      ok: true,
+      service: "sightline-web",
+      relayPath: "/ws/relay",
+      dashboardWs: "/ws/dashboard",
+      gemini: Boolean(config.geminiApiKey),
+      elevenlabs: Boolean(config.elevenLabsApiKey),
+    });
+  });
+
+  router.get("/link", async (_req, res) => {
+    res.json(await buildLinkInfo());
+  });
+
+  router.get("/state", (_req, res) => {
+    const state = app.getDashboardState();
+    res.json({
+      ...state,
+      objects: app.store.listObjects().map(objectWithThumb),
+    });
+  });
+
+  router.get("/objects", (_req, res) => {
+    res.json({ objects: app.store.listObjects().map(objectWithThumb) });
+  });
+
+  router.get("/objects/search", (req, res) => {
+    const q = String(req.query.q ?? "");
+    res.json({ objects: app.store.searchObjects(q).map(objectWithThumb) });
+  });
+
+  router.get("/events", (_req, res) => {
+    res.json({ events: app.store.listEvents(100) });
+  });
+
+  router.post("/missions/track", (req, res) => {
+    const target = String(req.body?.target ?? "phone");
+    const mission = app.startTrackMission(target);
+    res.json({ mission });
+  });
+
+  router.post("/recall", async (req, res) => {
+    const query = String(req.body?.query ?? "");
+    const result = await app.recall(query);
+    res.json(result);
+  });
+
+  router.post("/ans/verify", (req, res) => {
+    const agentAnsName = String(req.body?.agentAnsName ?? "");
+    const scopes = Array.isArray(req.body?.scopes) ? req.body.scopes.map(String) : ["memory.read"];
+    const result = app.requestAgentAccess(agentAnsName, scopes);
+    res.json({ request: result });
+  });
+
+  router.post("/ans/simulate-unknown", (_req, res) => {
+    res.json({ request: app.simulateUnknownAgent() });
+  });
+
+  router.post("/demo/reset", (_req, res) => {
+    app.resetDemo();
+    res.json({ ok: true });
+  });
+
+  return router;
+}

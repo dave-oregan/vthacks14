@@ -52,19 +52,20 @@ Developer Mode Meta App ID: `0` (see `Info.plist` → `MWDAT`).
 
 ## Network setup
 
-1. On the laptop, find the LAN IP (e.g. System Settings → Network, or `ipconfig getifaddr en0`).
-2. In SIGHTLINE Link → **Backend**:
-   - Host: laptop IP (default placeholder `192.168.1.100`)
-   - Port: `8000` (or your backend port)
-3. Expected WebSocket URL:
+1. Start Mission Control on the Mac (`cd web && npm run dev`).
+2. Put phone + Mac on the **same Wi‑Fi**.
+3. Pair using one of:
+   - **QR**: scan the code on Mission Control (auto-fills host and starts relay)
+   - **Bonjour**: in SIGHTLINE Link tap **Find Mission Control** → **LINK & START**
+   - **Manual**: expand Manual IP and enter the Mac LAN IP / port `8000`
+4. Live POV should appear on the laptop.
+
+Deep link format:
 
 ```text
-ws://<LAPTOP_IP>:8000/ws/relay
+sightlinelink://link?host=<MAC_LAN_IP>&port=8000&autoStart=1
 ```
 
-4. Start the SIGHTLINE backend, then tap **START SIGHTLINE RELAY** (or Connect).
-
-Protocol details: see [`PROTOCOL.md`](./PROTOCOL.md).
 
 ## Testing checklist
 

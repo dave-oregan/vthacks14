@@ -78,6 +78,7 @@
 	<string>SIGHTLINE connects to the SIGHTLINE backend running on your computer.</string>
 	<key>NSBonjourServices</key>
 	<array>
+		<string>_sightline._tcp</string>
 		<string>_http._tcp</string>
 		<string>_ws._tcp</string>
 	</array>
