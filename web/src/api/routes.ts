@@ -66,15 +66,15 @@ export function createApiRouter(app: SightlineApp) {
     res.json(result);
   });
 
-  router.post("/ans/verify", (req, res) => {
+  router.post("/ans/verify", async (req, res) => {
     const agentAnsName = String(req.body?.agentAnsName ?? "");
     const scopes = Array.isArray(req.body?.scopes) ? req.body.scopes.map(String) : ["memory.read"];
-    const result = app.requestAgentAccess(agentAnsName, scopes);
+    const result = await app.requestAgentAccess(agentAnsName, scopes);
     res.json({ request: result });
   });
 
-  router.post("/ans/simulate-unknown", (_req, res) => {
-    res.json({ request: app.simulateUnknownAgent() });
+  router.post("/ans/simulate-unknown", async (_req, res) => {
+    res.json({ request: await app.simulateUnknownAgent() });
   });
 
   router.post("/vision/report", async (req, res) => {

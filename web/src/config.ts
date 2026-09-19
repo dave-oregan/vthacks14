@@ -33,4 +33,18 @@ export const config = {
   dbPath: path.join(ROOT, "data", "sightline.sqlite"),
   publicDir: path.join(ROOT, "public"),
   dashboardDir: path.join(ROOT, "dashboard", "dist"),
+
+  // GoDaddy ANS
+  godaddyApiKey: process.env.GODADDY_API_KEY ?? "",
+  godaddyApiSecret: process.env.GODADDY_API_SECRET ?? "",
+
+  // Twilio
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ?? "",
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ?? "",
+  twilioFromNumber: process.env.TWILIO_FROM_NUMBER ?? "",
+  twilioToNumber: process.env.TWILIO_TO_NUMBER ?? "2023392791", // User's test number
+
+  // Database (Stretch)
+  mongoUri: process.env.MONGO_URI ?? "",
+  tigerDataUri: process.env.TIGER_DATA_URI ?? "",
 };

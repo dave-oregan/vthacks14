@@ -589,14 +589,14 @@ export class SightlineApp extends EventEmitter {
     return { ok: true as const, text, match, voice };
   }
 
-  requestAgentAccess(agentAnsName: string, scopes: string[]) {
+  async requestAgentAccess(agentAnsName: string, scopes: string[]) {
     // set verifying briefly in UI state
     this.agentStates = this.agentStates.map((a) =>
       a.ans === agentAnsName ? { ...a, state: "VERIFYING…" as const } : a,
     );
     this.broadcast();
 
-    const req = verifyAgentAccess(this.store, agentAnsName, scopes);
+    const req = await verifyAgentAccess(this.store, agentAnsName, scopes);
     this.lastAccessRequest = req;
     this.agentStates = this.agentStates.map((a) => {
       if (a.ans !== agentAnsName) return a;
@@ -609,7 +609,7 @@ export class SightlineApp extends EventEmitter {
     return req;
   }
 
-  simulateUnknownAgent() {
+  async simulateUnknownAgent() {
     return this.requestAgentAccess("ans://v1.0.0.rogue.unknown.agent", [
       "location",
       "memory.read",
