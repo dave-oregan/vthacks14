@@ -115,10 +115,16 @@ button, input { font: inherit; }
 
 .main {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.85fr);
+  grid-template-columns: minmax(0, 1.4fr) minmax(360px, 1fr);
   gap: 8px;
   min-height: 0;
   overflow: hidden;
+}
+
+@media (max-width: 1100px) {
+  .main {
+    grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.95fr);
+  }
 }
 
 @media (max-width: 980px) {
@@ -128,6 +134,10 @@ button, input { font: inherit; }
   }
   html, body, #root { overflow: auto; }
   .app { height: auto; max-height: none; overflow: visible; }
+  .side {
+    max-height: none;
+    overflow: visible;
+  }
 }
 
 .panel {
@@ -205,13 +215,53 @@ button, input { font: inherit; }
   flex-direction: column;
   gap: 8px;
   min-height: 0;
-  overflow: auto;
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+/* Keep sidebar panels at content size so the column scrolls instead of squishing. */
+.side > .panel {
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow: visible;
+}
+
+.side .scroll {
+  max-height: min(220px, 32vh);
+}
+
+.link-qr-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.link-qr {
+  flex: 0 0 auto;
+  width: 148px;
+  height: 148px;
+  background: #fff;
+  border-radius: 4px;
+  display: block;
+}
+
+.link-qr-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
 }
 
 .stack {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   padding: 10px;
 }
 
@@ -313,3 +363,89 @@ input[type="text"] {
 .status-blocked { color: var(--danger); }
 .status-verified { color: var(--ok); }
 .status-verify { color: var(--warn); }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(4, 8, 7, 0.72);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.modal {
+  width: min(560px, 100%);
+  max-height: min(80vh, 640px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  background: var(--bg-panel);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-sub {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
+
+.modal-list {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.recall-card {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  color: var(--text);
+  padding: 8px;
+  cursor: pointer;
+}
+.recall-card:hover {
+  border-color: #3b4d46;
+  background: #1a2622;
+}
+.recall-card img,
+.recall-thumb-empty {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  background: #000;
+}
+.recall-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.recall-meta strong {
+  font-size: 0.95rem;
+}
+.recall-meta span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+}
+.recall-coords {
+  color: var(--accent) !important;
+}
+

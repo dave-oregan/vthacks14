@@ -22,7 +22,7 @@ export interface Detection {
   descriptors: string[];
   confidence: number;
   bbox: BBox;
-  source: "coco" | "gemini" | "manual";
+  source: "coco" | "gemini" | "locateanything" | "manual";
 }
 
 export interface Observation {
@@ -38,6 +38,7 @@ export interface Observation {
 export interface MemoryObject {
   id: string;
   canonicalLabel: string;
+  displayName: string;
   descriptors: string[];
   firstSeenAtMs: number;
   lastSeenAtMs: number;

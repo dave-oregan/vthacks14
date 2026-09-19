@@ -16,6 +16,7 @@ export type DashState = {
   objects: Array<{
     id: string;
     canonicalLabel: string;
+    displayName?: string;
     descriptors: string[];
     lastSeenAtMs: number;
     lastLocation?: { latitude: number; longitude: number } | null;
@@ -49,6 +50,30 @@ export type DashState = {
       lastVideoSource?: string;
     };
   } | null;
+};
+
+export type RecallMatch = {
+  id: string;
+  phrase: string;
+  label: string;
+  descriptors: string[];
+  lastSeenAtMs: number;
+  lastSeenLabel: string;
+  latitude: number | null;
+  longitude: number | null;
+  mapsUrl: string | null;
+  thumbBase64: string | null;
+  sightingCount: number;
+  status: string;
+};
+
+export type RecallResult = {
+  text: string;
+  query: string;
+  needsChoice: boolean;
+  objectId?: string;
+  matches: RecallMatch[];
+  voice?: unknown;
 };
 
 export function useSightline() {
@@ -111,20 +136,26 @@ export function useSightline() {
     return () => ws.close();
   }, []);
 
-  async function track(target: string) {
-    await fetch("/api/missions/track", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target }),
-    });
-  }
-
-  async function recall(query: string) {
-    await fetch("/api/recall", {
+  async function recall(query: string): Promise<RecallResult> {
+    const res = await fetch("/api/recall", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query }),
     });
+    return (await res.json()) as RecallResult;
+  }
+
+  async function selectRecall(objectId: string) {
+    const res = await fetch("/api/recall/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ objectId }),
+    });
+    return res.json() as Promise<{
+      ok: boolean;
+      text?: string;
+      match?: RecallMatch;
+    }>;
   }
 
   async function verifyAgent(agentAnsName: string, scopes: string[]) {
@@ -143,5 +174,13 @@ export function useSightline() {
     await fetch("/api/demo/reset", { method: "POST" });
   }
 
-  return { state, connected, track, recall, verifyAgent, simulateUnknown, resetDemo };
+  return {
+    state,
+    connected,
+    recall,
+    selectRecall,
+    verifyAgent,
+    simulateUnknown,
+    resetDemo,
+  };
 }

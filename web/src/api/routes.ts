@@ -17,6 +17,8 @@ export function createApiRouter(app: SightlineApp) {
       relayPath: "/ws/relay",
       dashboardWs: "/ws/dashboard",
       gemini: Boolean(config.geminiApiKey),
+      locateAnything: Boolean(config.locateAnythingUrl),
+      visionMode: config.visionMode,
       elevenlabs: Boolean(config.elevenLabsApiKey),
     });
   });
@@ -58,6 +60,12 @@ export function createApiRouter(app: SightlineApp) {
     res.json(result);
   });
 
+  router.post("/recall/select", async (req, res) => {
+    const objectId = String(req.body?.objectId ?? "");
+    const result = await app.selectRecall(objectId);
+    res.json(result);
+  });
+
   router.post("/ans/verify", (req, res) => {
     const agentAnsName = String(req.body?.agentAnsName ?? "");
     const scopes = Array.isArray(req.body?.scopes) ? req.body.scopes.map(String) : ["memory.read"];
@@ -67,6 +75,13 @@ export function createApiRouter(app: SightlineApp) {
 
   router.post("/ans/simulate-unknown", (_req, res) => {
     res.json({ request: app.simulateUnknownAgent() });
+  });
+
+  router.post("/vision/report", async (req, res) => {
+    const detections = Array.isArray(req.body?.detections) ? req.body.detections : [];
+    const timestampMs = Number(req.body?.timestampMs ?? Date.now());
+    const result = await app.ingestClientDetections(detections, timestampMs);
+    res.json({ ok: true, ...result });
   });
 
   router.post("/demo/reset", (_req, res) => {

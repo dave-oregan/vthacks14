@@ -19,6 +19,7 @@
     "@tensorflow-models/coco-ssd": "^2.2.3",
     "@tensorflow/tfjs": "^4.22.0",
     "@tensorflow/tfjs-backend-cpu": "^4.22.0",
+    "@tensorflow/tfjs-node": "^4.22.0",
     "better-sqlite3": "^11.9.1",
     "bonjour-service": "^1.4.4",
     "cors": "^2.8.5",

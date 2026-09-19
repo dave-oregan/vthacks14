@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 type Detection = {
   trackId: string;
   displayName: string;
@@ -8,19 +10,40 @@ type Detection = {
 
 const BOX_COLORS = ["#d6ff4b", "#5ec8ff", "#ffb86b", "#c4a7ff", "#3ddc97", "#ff6b9d"];
 
+function base64ToObjectUrl(b64: string): string {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
+}
+
 export function LivePOV({
   jpegBase64,
   detections,
   source,
+  visionStatus,
 }: {
   jpegBase64: string | null;
   detections: Detection[];
   source?: string;
+  visionStatus?: string;
 }) {
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!jpegBase64) {
+      setSrc(null);
+      return;
+    }
+    const url = base64ToObjectUrl(jpegBase64);
+    setSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [jpegBase64]);
+
   return (
     <div className="pov-wrap">
-      {jpegBase64 ? (
-        <img src={`data:image/jpeg;base64,${jpegBase64}`} alt="Live POV" />
+      {src ? (
+        <img src={src} alt="Live POV" decoding="async" />
       ) : (
         <div className="pov-empty">
           Waiting for iOS Link video…
@@ -54,6 +77,7 @@ export function LivePOV({
       >
         {detections.length} obj{detections.length === 1 ? "" : "s"}
         {source ? ` · ${source}` : ""}
+        {visionStatus ? ` · ${visionStatus}` : ""}
       </div>
     </div>
   );

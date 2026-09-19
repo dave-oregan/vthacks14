@@ -14,10 +14,20 @@ export const config = {
   elevenLabsApiKey: process.env.ELEVENLABS_API_KEY ?? "",
   elevenLabsVoiceId: process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM",
   ansTeamDomain: process.env.ANS_TEAM_DOMAIN ?? "sightline.local",
-  visionEveryNFrames: Number(process.env.VISION_EVERY_N_FRAMES ?? 3),
+  visionEveryNFrames: Number(process.env.VISION_EVERY_N_FRAMES ?? 8),
   visionMinScore: Number(process.env.VISION_MIN_SCORE ?? 0.35),
-  previewMaxFps: Number(process.env.PREVIEW_MAX_FPS ?? 5),
-  geminiEveryNVisionPasses: Number(process.env.GEMINI_EVERY_N_VISION ?? 4),
+  previewMaxFps: Number(process.env.PREVIEW_MAX_FPS ?? 12),
+  /**
+   * browser = Mission Control WebGL COCO (default, smooth)
+   * server  = Node COCO on laptop
+   * both    = both paths
+   */
+  visionMode: (process.env.VISION_MODE ?? "browser") as "browser" | "server" | "both",
+  /** How often Gemini enriches descriptors (separate from vision cadence). */
+  geminiEveryNVisionPasses: Number(process.env.GEMINI_EVERY_N_VISION ?? 6),
+  /** Optional NVIDIA LocateAnything worker base URL (POST /detect). */
+  locateAnythingUrl: (process.env.LOCATE_ANYTHING_URL ?? "").replace(/\/$/, ""),
+  locateAnythingTimeoutMs: Number(process.env.LOCATE_ANYTHING_TIMEOUT_MS ?? 8000),
   leaveBehindMeters: Number(process.env.LEAVE_BEHIND_METERS ?? 12),
   leaveBehindAbsentMs: Number(process.env.LEAVE_BEHIND_ABSENT_MS ?? 8000),
   dbPath: path.join(ROOT, "data", "sightline.sqlite"),

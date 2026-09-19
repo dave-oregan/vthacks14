@@ -1,6 +1,7 @@
 type Obj = {
   id: string;
   canonicalLabel: string;
+  displayName?: string;
   descriptors: string[];
   lastSeenAtMs: number;
   lastLocation?: { latitude: number; longitude: number } | null;
@@ -24,9 +25,11 @@ export function MemoryPanel({ objects }: { objects: Obj[] }) {
           </div>
         )}
         {objects.map((o) => {
-          const phrase = [...o.descriptors.filter((d) => d !== o.canonicalLabel).slice(0, 3), o.canonicalLabel]
-            .filter(Boolean)
-            .join(" ");
+          const phrase =
+            o.displayName?.trim() ||
+            [...o.descriptors.filter((d) => d !== o.canonicalLabel).slice(0, 3), o.canonicalLabel]
+              .filter(Boolean)
+              .join(" ");
           return (
             <div className="obj-item" key={o.id}>
               {o.thumbBase64 ? (

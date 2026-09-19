@@ -4,12 +4,17 @@ import { RelayHub, type RelayVideoFrame } from "./relay/relayHub.js";
 import { MemoryStore, formatObjectPhrase } from "./memory/store.js";
 import {
   detectObjects,
-  enrichWithGemini,
   cropThumb,
   makePreviewJpeg,
 } from "./vision/detector.js";
+import { describeDetectionsLocally } from "./vision/appearance.js";
+import {
+  detectWithLocateAnything,
+  hasLocateAnything,
+} from "./vision/locateAnything.js";
+import { enrichDetectionsWithGemini } from "./gemini/enricher.js";
 import { hasGemini } from "./gemini/client.js";
-import { answerRecallQuery } from "./gemini/reasoner.js";
+import { answerRecallQuery, toRecallMatch } from "./gemini/reasoner.js";
 import { listDemoAgents, verifyAgentAccess } from "./ans/trustGate.js";
 import { speak } from "./voice/elevenlabs.js";
 import type {
@@ -29,6 +34,7 @@ export class SightlineApp extends EventEmitter {
   private latestDetections: Detection[] = [];
   private frameCounter = 0;
   private visionBusy = false;
+  private geminiBusy = false;
   private geminiCounter = 0;
   private transcriptSnippet = "";
   private mode = "STANDBY";
@@ -66,7 +72,11 @@ export class SightlineApp extends EventEmitter {
       this.frameCounter += 1;
       this.mode = "LIVE";
       void this.maybeBroadcastPreview();
-      if (this.frameCounter % config.visionEveryNFrames === 0) {
+      // Server-side detect only when explicitly enabled (browser mode is default for smoothness).
+      if (
+        (config.visionMode === "server" || config.visionMode === "both") &&
+        this.frameCounter % config.visionEveryNFrames === 0
+      ) {
         void this.runVision(frame);
       }
     });
@@ -116,66 +126,35 @@ export class SightlineApp extends EventEmitter {
     if (this.visionBusy) return;
     this.visionBusy = true;
     try {
-      // COCO owns boxes (accurate). Gemini only adds display names / descriptors.
-      let detections = await detectObjects(frame.jpeg);
-      this.geminiCounter += 1;
-      if (hasGemini() && this.geminiCounter % config.geminiEveryNVisionPasses === 0) {
-        detections = await enrichWithGemini(frame.jpeg, detections);
+      // Local / LocateAnything detection only — Gemini never blocks this path.
+      let detections: Detection[];
+      if (hasLocateAnything()) {
+        const la = await detectWithLocateAnything(frame.jpeg);
+        detections = la.length > 0 ? la : await detectObjects(frame.jpeg);
+      } else {
+        detections = await detectObjects(frame.jpeg);
       }
+      detections = await describeDetectionsLocally(frame.jpeg, detections);
       this.latestDetections = detections;
       this.relay.markVisioned();
 
-      const location = this.relay.getSession()?.lastLocation ?? null;
-      // Persist all non-person detections in parallel (multi-object memory).
-      const toStore = detections.filter((d) => d.label !== "person");
-      await Promise.all(
-        toStore.map(async (det) => {
-          const thumb =
-            det.confidence >= 0.5 ? await cropThumb(frame.jpeg, det.bbox) : null;
-          const { object, isNew } = this.store.upsertSighting({
-            label: det.label,
-            descriptors: det.descriptors.length
-              ? det.descriptors
-              : [det.displayName, det.label],
-            confidence: det.confidence,
-            bbox: det.bbox,
-            location,
-            thumbJpeg: thumb,
-            sessionId: frame.sessionId,
-            timestampMs: frame.timestampMs,
-          });
+      // Schedule Gemini enrichment separately (descriptors / display names).
+      this.geminiCounter += 1;
+      if (
+        hasGemini() &&
+        !this.geminiBusy &&
+        this.geminiCounter % Math.max(config.geminiEveryNVisionPasses, 8) === 0 &&
+        detections.length > 0
+      ) {
+        void this.runGeminiEnrich(frame.jpeg, detections);
+      }
 
-          if (location) {
-            this.placedAnchors.set(object.id, {
-              location,
-              seenAtMs: frame.timestampMs,
-            });
-          }
-
-          if (isNew) {
-            this.store.addEvent({
-              type: "object_seen",
-              timestampMs: frame.timestampMs,
-              sessionId: frame.sessionId,
-              subjectObjectId: object.id,
-              description: `Seen ${formatObjectPhrase(object)}`,
-              frameRef: `frame:${frame.sequence}`,
-              location,
-            });
-          } else if (object.sightingCount % 25 === 0) {
-            this.store.addEvent({
-              type: "object_seen",
-              timestampMs: frame.timestampMs,
-              sessionId: frame.sessionId,
-              subjectObjectId: object.id,
-              description: `Still tracking ${formatObjectPhrase(object)}`,
-              location,
-            });
-          }
-        }),
+      await this.persistDetections(detections, frame);
+      await this.syncTrackMissions(
+        detections,
+        this.relay.getSession()?.lastLocation ?? null,
+        frame.sessionId,
       );
-
-      await this.syncTrackMissions(detections, location, frame.sessionId);
       // Push detections quickly via frame channel; full state less often.
       this.emit("frame", {
         jpegBase64: this.latestPreviewJpeg?.toString("base64") ?? null,
@@ -184,9 +163,178 @@ export class SightlineApp extends EventEmitter {
       });
       this.broadcast();
     } catch (err) {
-      console.warn("[vision] pipeline error:", err instanceof Error ? err.message : err);
+      console.warn("[vision] failed:", err instanceof Error ? err.message : err);
     } finally {
       this.visionBusy = false;
+    }
+  }
+
+  /** Accept browser (or remote) detections into memory without running Node COCO. */
+  async ingestClientDetections(
+    raw: Array<{
+      trackId?: string;
+      label?: string;
+      displayName?: string;
+      descriptors?: string[];
+      confidence?: number;
+      bbox?: { x: number; y: number; width: number; height: number };
+    }>,
+    timestampMs?: number,
+  ): Promise<{ count: number }> {
+    const detections: Detection[] = (raw ?? [])
+      .filter((d) => d && d.bbox && typeof d.label === "string")
+      .map((d, index) => ({
+        trackId: d.trackId || `client-${index}`,
+        label: String(d.label).toLowerCase(),
+        displayName: String(d.displayName || d.label),
+        descriptors: Array.isArray(d.descriptors) ? d.descriptors.map(String) : [String(d.label)],
+        confidence: Number(d.confidence ?? 0.5),
+        bbox: {
+          x: Number(d.bbox!.x),
+          y: Number(d.bbox!.y),
+          width: Number(d.bbox!.width),
+          height: Number(d.bbox!.height),
+        },
+        source: "coco" as const,
+      }));
+
+    this.latestDetections = detections;
+    this.relay.markVisioned();
+    this.mode = "LIVE";
+
+    const session = this.relay.getSession();
+    const frameLike = {
+      jpeg: this.latestFrameJpeg ?? Buffer.alloc(0),
+      sessionId: session?.sessionId ?? "browser",
+      timestampMs: timestampMs ?? Date.now(),
+      sequence: this.frameCounter,
+    };
+
+    if (this.latestFrameJpeg) {
+      // Local color/material from pixels — works offline, no hallucination.
+      let toPersist = await describeDetectionsLocally(this.latestFrameJpeg, detections);
+      this.latestDetections = toPersist;
+
+      // Optional Gemini polish (skipped automatically when quota-cooled).
+      this.geminiCounter += 1;
+      if (
+        hasGemini() &&
+        !this.geminiBusy &&
+        this.geminiCounter % Math.max(config.geminiEveryNVisionPasses, 8) === 0
+      ) {
+        this.geminiBusy = true;
+        try {
+          toPersist = await enrichDetectionsWithGemini(this.latestFrameJpeg, toPersist);
+          this.latestDetections = toPersist;
+        } finally {
+          this.geminiBusy = false;
+        }
+      }
+      await this.persistDetections(toPersist, frameLike);
+    }
+
+    await this.syncTrackMissions(
+      detections,
+      session?.lastLocation ?? null,
+      session?.sessionId ?? "browser",
+    );
+    this.emit("frame", {
+      jpegBase64: this.latestPreviewJpeg?.toString("base64") ?? null,
+      detections: this.latestDetections,
+      session,
+    });
+    this.broadcast();
+    return { count: detections.length };
+  }
+
+  private async persistDetections(
+    detections: Detection[],
+    frame: { jpeg: Buffer; sessionId: string; timestampMs: number; sequence: number },
+  ): Promise<void> {
+    const location = this.relay.getSession()?.lastLocation ?? null;
+    const toStore = detections.filter((d) => d.label !== "person");
+    await Promise.all(
+      toStore.map(async (det) => {
+        const thumb =
+          frame.jpeg.length > 0 && det.confidence >= 0.5
+            ? await cropThumb(frame.jpeg, det.bbox)
+            : null;
+        const { object, isNew } = this.store.upsertSighting({
+          label: det.label,
+          displayName: det.displayName,
+          descriptors: det.descriptors.length
+            ? det.descriptors
+            : [det.displayName, det.label],
+          confidence: det.confidence,
+          bbox: det.bbox,
+          location,
+          thumbJpeg: thumb,
+          sessionId: frame.sessionId,
+          timestampMs: frame.timestampMs,
+        });
+
+        if (location) {
+          this.placedAnchors.set(object.id, {
+            location,
+            seenAtMs: frame.timestampMs,
+          });
+        }
+
+        if (isNew) {
+          this.store.addEvent({
+            type: "object_seen",
+            timestampMs: frame.timestampMs,
+            sessionId: frame.sessionId,
+            subjectObjectId: object.id,
+            description: `Seen ${formatObjectPhrase(object)}`,
+            frameRef: `frame:${frame.sequence}`,
+            location,
+          });
+        } else if (object.sightingCount % 25 === 0) {
+          this.store.addEvent({
+            type: "object_seen",
+            timestampMs: frame.timestampMs,
+            sessionId: frame.sessionId,
+            subjectObjectId: object.id,
+            description: `Still tracking ${formatObjectPhrase(object)}`,
+            location,
+          });
+        }
+      }),
+    );
+  }
+
+  /** Async descriptor pass — must not stall COCO / LocateAnything detection. */
+  private async runGeminiEnrich(jpeg: Buffer, snapshot: Detection[]): Promise<void> {
+    if (this.geminiBusy) return;
+    this.geminiBusy = true;
+    try {
+      const enriched = await enrichDetectionsWithGemini(jpeg, snapshot);
+      if (enriched === snapshot) return;
+      this.latestDetections = this.latestDetections.map((cur) => {
+        const match = enriched.find(
+          (e) =>
+            e.trackId === cur.trackId ||
+            (e.label === cur.label && boxIoU(e.bbox, cur.bbox) > 0.4),
+        );
+        if (!match) return cur;
+        return {
+          ...cur,
+          displayName: match.displayName || cur.displayName,
+          descriptors: match.descriptors.length ? match.descriptors : cur.descriptors,
+          label: match.label || cur.label,
+          source: match.source === "gemini" ? "gemini" : cur.source,
+        };
+      });
+      this.emit("frame", {
+        jpegBase64: this.latestPreviewJpeg?.toString("base64") ?? null,
+        detections: this.latestDetections,
+        session: this.relay.getSession(),
+      });
+    } catch (err) {
+      console.warn("[gemini] enrich path failed:", err instanceof Error ? err.message : err);
+    } finally {
+      this.geminiBusy = false;
     }
   }
 
@@ -297,14 +445,32 @@ export class SightlineApp extends EventEmitter {
 
   async recall(query: string) {
     const result = await answerRecallQuery(query, this.store);
-    if (result.objectId) {
-      this.store.markRecalled(result.objectId, this.relay.getSession()?.sessionId ?? "dashboard");
-    }
-    const voice = await speak(result.text);
     this.transcriptSnippet = query;
+    // Only auto-mark when a single specific match; multi-match waits for user pick.
+    if (!result.needsChoice && result.objectId) {
+      this.store.markRecalled(result.objectId, this.relay.getSession()?.sessionId ?? "dashboard");
+      const voice = await speak(result.text);
+      this.emit("voice", voice);
+      this.broadcast();
+      return { ...result, voice };
+    }
+    this.broadcast();
+    return result;
+  }
+
+  async selectRecall(objectId: string) {
+    const obj = this.store.getObject(objectId);
+    if (!obj) return { ok: false as const, text: "That memory card is gone." };
+    this.store.markRecalled(objectId, this.relay.getSession()?.sessionId ?? "dashboard");
+    const match = toRecallMatch(obj);
+    const text = match.mapsUrl
+      ? `${match.phrase} last seen at ${match.latitude?.toFixed(5)}, ${match.longitude?.toFixed(5)}.`
+      : `${match.phrase} has no GPS fix yet.`;
+    const voice = await speak(text);
+    this.transcriptSnippet = match.phrase;
     this.emit("voice", voice);
     this.broadcast();
-    return { ...result, voice };
+    return { ok: true as const, text, match, voice };
   }
 
   requestAgentAccess(agentAnsName: string, scopes: string[]) {
@@ -380,6 +546,26 @@ function objectWithThumb(obj: MemoryObject) {
       ? Buffer.from(obj.lastFrameThumbJpeg).toString("base64")
       : null,
   };
+}
+
+function boxIoU(
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number },
+): number {
+  const ax2 = a.x + a.width;
+  const ay2 = a.y + a.height;
+  const bx2 = b.x + b.width;
+  const by2 = b.y + b.height;
+  const ix1 = Math.max(a.x, b.x);
+  const iy1 = Math.max(a.y, b.y);
+  const ix2 = Math.min(ax2, bx2);
+  const iy2 = Math.min(ay2, by2);
+  const iw = Math.max(0, ix2 - ix1);
+  const ih = Math.max(0, iy2 - iy1);
+  const inter = iw * ih;
+  if (inter <= 0) return 0;
+  const union = a.width * a.height + b.width * b.height - inter;
+  return union > 0 ? inter / union : 0;
 }
 
 export { objectWithThumb };

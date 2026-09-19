@@ -85,6 +85,11 @@ export class MemoryStore {
       CREATE INDEX IF NOT EXISTS idx_objects_label ON objects(canonical_label);
       CREATE INDEX IF NOT EXISTS idx_events_time ON events(timestamp_ms DESC);
     `);
+    // Object permanence: human phrase like "grey mac laptop"
+    const cols = this.db.prepare(`PRAGMA table_info(objects)`).all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "display_name")) {
+      this.db.exec(`ALTER TABLE objects ADD COLUMN display_name TEXT NOT NULL DEFAULT ''`);
+    }
   }
 
   resetDemo(): void {
@@ -93,6 +98,7 @@ export class MemoryStore {
 
   upsertSighting(input: {
     label: string;
+    displayName?: string;
     descriptors: string[];
     confidence: number;
     bbox: BBox;
@@ -102,13 +108,29 @@ export class MemoryStore {
     timestampMs: number;
   }): { object: MemoryObject; isNew: boolean } {
     const normalized = normalizeLabel(input.label);
-    const existing = this.findBestMatch(normalized, input.descriptors);
+    const descriptors = unique([
+      ...(input.descriptors ?? []),
+      input.displayName || "",
+      normalized,
+    ]);
+    const displayName = (
+      input.displayName?.trim() ||
+      buildDisplayName(normalized, descriptors) ||
+      normalized
+    ).toLowerCase();
+
+    const existing = this.findBestMatch(normalized, descriptors, input.bbox, input.timestampMs);
     if (existing) {
-      const descriptors = mergeDescriptors(existing.descriptors, input.descriptors);
+      const merged = mergeDescriptors(existing.descriptors, descriptors);
+      const nextName =
+        displayName !== normalized && displayName.split(/\s+/).length >= 2
+          ? displayName
+          : existing.displayName || displayName;
       this.db
         .prepare(
           `UPDATE objects SET
             descriptors_json = ?,
+            display_name = ?,
             last_seen_at_ms = ?,
             last_location_json = ?,
             last_frame_thumb = COALESCE(?, last_frame_thumb),
@@ -120,34 +142,37 @@ export class MemoryStore {
            WHERE id = ?`,
         )
         .run(
-          JSON.stringify(descriptors),
+          JSON.stringify(merged),
+          nextName,
           input.timestampMs,
-          input.location ? JSON.stringify(input.location) : existing.lastLocation
-            ? JSON.stringify(existing.lastLocation)
-            : null,
+          input.location
+            ? JSON.stringify(input.location)
+            : existing.lastLocation
+              ? JSON.stringify(existing.lastLocation)
+              : null,
           input.thumbJpeg ?? null,
           JSON.stringify(input.bbox),
           input.confidence,
           input.sessionId,
           existing.id,
         );
-      const updated = this.getObject(existing.id)!;
-      return { object: updated, isNew: false };
+      return { object: this.getObject(existing.id)!, isNew: false };
     }
 
     const id = uuid();
     this.db
       .prepare(
         `INSERT INTO objects (
-          id, canonical_label, descriptors_json, first_seen_at_ms, last_seen_at_ms,
+          id, canonical_label, display_name, descriptors_json, first_seen_at_ms, last_seen_at_ms,
           last_location_json, last_frame_thumb, last_bbox_json, last_confidence,
           sighting_count, session_id, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'observed')`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'observed')`,
       )
       .run(
         id,
         normalized,
-        JSON.stringify(unique(input.descriptors)),
+        displayName,
+        JSON.stringify(descriptors),
         input.timestampMs,
         input.timestampMs,
         input.location ? JSON.stringify(input.location) : null,
@@ -235,11 +260,25 @@ export class MemoryStore {
   }
 
   searchObjects(query: string): MemoryObject[] {
-    const q = query.toLowerCase().trim();
-    return this.listObjects().filter((o) => {
-      const hay = `${o.canonicalLabel} ${o.descriptors.join(" ")}`.toLowerCase();
-      return q.split(/\s+/).every((token) => hay.includes(token));
-    });
+    const tokens = tokenizeQuery(query);
+    if (tokens.length === 0) return this.listObjects();
+
+    const scored = this.listObjects()
+      .map((o) => {
+        const hay = `${o.displayName} ${o.canonicalLabel} ${o.descriptors.join(" ")}`.toLowerCase();
+        const hits = tokens.filter((t) => hay.includes(t));
+        // Prefer matches that cover more query tokens (specificity).
+        const score = hits.length;
+        const specificBonus = tokens.every((t) => hay.includes(t)) ? 10 : 0;
+        return { o, score: score + specificBonus, complete: hits.length === tokens.length };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score || b.o.lastSeenAtMs - a.o.lastSeenAtMs);
+
+    // If query is specific (e.g. "black laptop"), only keep complete matches when any exist.
+    const complete = scored.filter((x) => x.complete);
+    const pool = complete.length > 0 ? complete : scored;
+    return pool.map((x) => x.o);
   }
 
   listEvents(limit = 100): TimelineEvent[] {
@@ -312,22 +351,62 @@ export class MemoryStore {
     return haversineMeters(a, b);
   }
 
-  private findBestMatch(label: string, descriptors: string[]): MemoryObject | null {
-    const candidates = this.listObjects().filter((o) => o.canonicalLabel === label);
-    if (candidates.length === 0) {
-      // soft match: phone/cell phone/iphone family
-      const family = labelFamily(label);
-      const soft = this.listObjects().filter((o) => labelFamily(o.canonicalLabel) === family);
-      if (soft.length === 0) return null;
-      return pickByDescriptorOverlap(soft, descriptors);
+  private findBestMatch(
+    label: string,
+    descriptors: string[],
+    bbox: BBox,
+    timestampMs: number,
+  ): MemoryObject | null {
+    const family = labelFamily(label);
+    const candidates = this.listObjects().filter(
+      (o) => labelFamily(o.canonicalLabel) === family,
+    );
+    if (candidates.length === 0) return null;
+
+    const incomingColors = extractColors(descriptors);
+    const distinctive = descriptors.filter((d) => isDistinctiveDescriptor(d, family));
+
+    // Spatiotemporal continuity: same box recently → same instance (even before color known).
+    for (const c of candidates) {
+      if (timestampMs - c.lastSeenAtMs > 20_000) continue;
+      if (c.lastBBox && boxIoU(c.lastBBox, bbox) >= 0.4) return c;
     }
-    return pickByDescriptorOverlap(candidates, descriptors);
+
+    const compatible = candidates.filter((c) => {
+      const cColors = extractColors(c.descriptors);
+      if (incomingColors.size === 0 || cColors.size === 0) return true;
+      // Conflicting colors (black vs white) → different objects
+      return [...incomingColors].some((col) => cColors.has(col));
+    });
+    if (compatible.length === 0) return null;
+
+    let best: MemoryObject | null = null;
+    let bestScore = -1;
+    const incoming = new Set(descriptors.map((d) => d.toLowerCase()));
+    for (const c of compatible) {
+      const overlap = c.descriptors.reduce(
+        (n, d) => n + (incoming.has(d.toLowerCase()) ? 1 : 0),
+        0,
+      );
+      if (overlap > bestScore) {
+        bestScore = overlap;
+        best = c;
+      }
+    }
+
+    // Distinctive appearance with zero overlap → new memory card (object permanence).
+    if (distinctive.length > 0 && bestScore <= 0) return null;
+    // No appearance cues yet and no spatial lock → new card (avoid merging all "laptop"s).
+    if (distinctive.length === 0) return null;
+
+    return bestScore > 0 ? best : null;
   }
 }
 
 interface RawObject {
   id: string;
   canonical_label: string;
+  display_name?: string;
   descriptors_json: string;
   first_seen_at_ms: number;
   last_seen_at_ms: number;
@@ -365,10 +444,16 @@ interface RawMission {
 }
 
 function rowToObject(row: RawObject): MemoryObject {
+  const descriptors = JSON.parse(row.descriptors_json) as string[];
+  const displayName =
+    (row.display_name && row.display_name.trim()) ||
+    buildDisplayName(row.canonical_label, descriptors) ||
+    row.canonical_label;
   return {
     id: row.id,
     canonicalLabel: row.canonical_label,
-    descriptors: JSON.parse(row.descriptors_json) as string[],
+    displayName,
+    descriptors,
     firstSeenAtMs: row.first_seen_at_ms,
     lastSeenAtMs: row.last_seen_at_ms,
     lastLocation: row.last_location_json
@@ -414,7 +499,7 @@ function labelFamily(label: string): string {
 }
 
 function mergeDescriptors(a: string[], b: string[]): string[] {
-  return unique([...a, ...b]).slice(0, 12);
+  return unique([...a, ...b]).slice(0, 14);
 }
 
 function unique(items: string[]): string[] {
@@ -429,22 +514,121 @@ function unique(items: string[]): string[] {
   return out;
 }
 
-function pickByDescriptorOverlap(candidates: MemoryObject[], descriptors: string[]): MemoryObject {
-  if (candidates.length === 1) return candidates[0]!;
-  const set = new Set(descriptors.map((d) => d.toLowerCase()));
-  let best = candidates[0]!;
-  let bestScore = -1;
-  for (const c of candidates) {
-    const score = c.descriptors.reduce((n, d) => n + (set.has(d.toLowerCase()) ? 1 : 0), 0);
-    if (score > bestScore || (score === bestScore && c.lastSeenAtMs > best.lastSeenAtMs)) {
-      best = c;
-      bestScore = score;
-    }
+const COLORS = new Set([
+  "black",
+  "white",
+  "grey",
+  "gray",
+  "silver",
+  "space gray",
+  "graphite",
+  "blue",
+  "red",
+  "green",
+  "yellow",
+  "pink",
+  "purple",
+  "orange",
+  "brown",
+  "gold",
+  "beige",
+  "navy",
+  "teal",
+]);
+
+const STOPWORDS = new Set([
+  "where",
+  "is",
+  "my",
+  "the",
+  "a",
+  "an",
+  "did",
+  "i",
+  "leave",
+  "find",
+  "last",
+  "seen",
+  "at",
+  "of",
+  "to",
+  "me",
+  "was",
+  "are",
+  "what",
+  "which",
+  "please",
+  "show",
+  "recall",
+  "locate",
+  "for",
+  "and",
+  "or",
+  "in",
+  "on",
+  "with",
+]);
+
+function extractColors(descriptors: string[]): Set<string> {
+  const out = new Set<string>();
+  const joined = descriptors.join(" ").toLowerCase();
+  for (const c of COLORS) {
+    if (joined.includes(c)) out.add(c === "gray" ? "grey" : c);
   }
-  return best;
+  return out;
+}
+
+function isDistinctiveDescriptor(d: string, family: string): boolean {
+  const k = d.toLowerCase().trim();
+  if (!k || k === family) return false;
+  if (COLORS.has(k) || COLORS.has(k.replace("gray", "grey"))) return true;
+  if (["mac", "macbook", "dell", "hp", "lenovo", "asus", "case", "silicone", "leather", "metal", "plastic"].includes(k)) {
+    return true;
+  }
+  return k.length > 2 && k !== "object";
+}
+
+function buildDisplayName(label: string, descriptors: string[]): string {
+  const family = normalizeLabel(label);
+  const extras = descriptors
+    .map((d) => d.toLowerCase().trim())
+    .filter((d) => d && d !== family && !STOPWORDS.has(d));
+  const colors = extras.filter((d) => COLORS.has(d) || d === "grey" || d === "gray");
+  const other = extras.filter((d) => !COLORS.has(d) && d !== "grey" && d !== "gray").slice(0, 3);
+  const parts = unique([...colors.slice(0, 1), ...other, family]);
+  return parts.join(" ");
+}
+
+function tokenizeQuery(query: string): string[] {
+  return query
+    .toLowerCase()
+    .replace(/[?.,!'"]/g, " ")
+    .split(/\s+/)
+    .map((t) => (t === "iphone" || t === "smartphone" ? "phone" : t))
+    .map((t) => (t === "macbook" || t === "notebook" ? "laptop" : t))
+    .map((t) => (t === "gray" ? "grey" : t))
+    .filter((t) => t && !STOPWORDS.has(t));
+}
+
+function boxIoU(a: BBox, b: BBox): number {
+  const ax2 = a.x + a.width;
+  const ay2 = a.y + a.height;
+  const bx2 = b.x + b.width;
+  const by2 = b.y + b.height;
+  const ix1 = Math.max(a.x, b.x);
+  const iy1 = Math.max(a.y, b.y);
+  const ix2 = Math.min(ax2, bx2);
+  const iy2 = Math.min(ay2, by2);
+  const iw = Math.max(0, ix2 - ix1);
+  const ih = Math.max(0, iy2 - iy1);
+  const inter = iw * ih;
+  if (inter <= 0) return 0;
+  const union = a.width * a.height + b.width * b.height - inter;
+  return union > 0 ? inter / union : 0;
 }
 
 export function formatObjectPhrase(obj: MemoryObject): string {
+  if (obj.displayName && obj.displayName.trim()) return obj.displayName.trim();
   const desc = obj.descriptors.filter((d) => d !== obj.canonicalLabel).slice(0, 3);
   if (desc.length === 0) return obj.canonicalLabel;
   return `${desc.join(" ")} ${obj.canonicalLabel}`;

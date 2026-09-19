@@ -63,15 +63,15 @@ export function LinkPanel({ linked }: { linked: boolean }) {
             </p>
 
             {info?.qrDataUrl && (
-              <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+              <div className="link-qr-row">
                 <img
+                  className="link-qr"
                   src={info.qrDataUrl}
                   alt="Pairing QR"
-                  width={140}
-                  height={140}
-                  style={{ background: "#fff", borderRadius: 4 }}
+                  width={148}
+                  height={148}
                 />
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+                <div className="link-qr-meta">
                   <div className="row">
                     <span className="k">Mac IP</span>
                     <span className="v">{info.preferredHost ?? "—"}</span>

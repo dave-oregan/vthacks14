@@ -19,7 +19,7 @@ export function hasGemini(): boolean {
 }
 
 /**
- * Run generateContent, retrying with the next model name on 404.
+ * Run generateContent, retrying with the next model name on 404 / 503.
  */
 export async function generateWithFallback(
   parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }>,
@@ -48,11 +48,12 @@ export async function generateWithFallback(
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
-      if (/404|not found|no longer available/i.test(msg)) {
+      if (/404|not found|no longer available|503|high demand|unavailable/i.test(msg)) {
         console.warn(`[gemini] model ${name} unavailable, trying next…`);
         if (cachedModelName === name) cachedModelName = null;
         continue;
       }
+      // Don't burn the free-tier quota hopping models on 429.
       throw err;
     }
   }

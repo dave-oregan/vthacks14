@@ -1,17 +1,41 @@
 import { useMemo, useState } from "react";
-import { useSightline } from "./hooks/useSightline";
+import { useSightline, type RecallMatch } from "./hooks/useSightline";
+import { useBrowserVision } from "./hooks/useBrowserVision";
 import { LivePOV } from "./components/LivePOV";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { AgentPanel } from "./components/AgentPanel";
 import { Timeline } from "./components/Timeline";
 import { LinkPanel } from "./components/LinkPanel";
+import { RecallPicker } from "./components/RecallPicker";
 
 export function App() {
-  const { state, connected, track, recall, verifyAgent, simulateUnknown, resetDemo } =
+  const { state, connected, recall, selectRecall, verifyAgent, simulateUnknown, resetDemo } =
     useSightline();
-  const [query, setQuery] = useState("Where is my phone?");
-  const [trackTarget, setTrackTarget] = useState("phone");
+  const [query, setQuery] = useState("Where is my black laptop?");
   const [busy, setBusy] = useState<string | null>(null);
+  const [recallNote, setRecallNote] = useState<string | null>(null);
+  const [picker, setPicker] = useState<{ query: string; matches: RecallMatch[] } | null>(null);
+
+  const { detections: browserDets, ready: visionReady, status: visionStatus } = useBrowserVision(
+    state?.latestFrameJpegBase64 ?? null,
+    { enabled: true, report: true },
+  );
+
+  const overlayDetections = (() => {
+    const server = state?.latestDetections ?? [];
+    if (!visionReady) return server;
+    return browserDets.map((d) => {
+      const match = server.find(
+        (s) =>
+          s.label === d.label &&
+          Math.abs(s.bbox.x - d.bbox.x) < 0.12 &&
+          Math.abs(s.bbox.y - d.bbox.y) < 0.12,
+      );
+      return match && match.displayName && match.displayName !== match.label
+        ? { ...d, displayName: match.displayName, descriptors: match.descriptors }
+        : d;
+    });
+  })();
 
   const linkStatus = useMemo(() => {
     if (!state?.session?.connected) return { label: "LINK DOWN", tone: "warn" as const };
@@ -25,6 +49,33 @@ export function App() {
     } finally {
       setBusy(null);
     }
+  }
+
+  async function doRecall() {
+    const result = await recall(query);
+    if (result.needsChoice && result.matches.length > 1) {
+      setPicker({ query: result.query || query, matches: result.matches });
+      setRecallNote(result.text);
+      return;
+    }
+    if (result.matches[0]?.mapsUrl) {
+      window.open(result.matches[0].mapsUrl, "_blank", "noopener,noreferrer");
+    }
+    setRecallNote(result.text);
+    setPicker(null);
+  }
+
+  async function onPickMatch(m: RecallMatch) {
+    await selectRecall(m.id);
+    if (m.mapsUrl) {
+      window.open(m.mapsUrl, "_blank", "noopener,noreferrer");
+    }
+    setRecallNote(
+      m.latitude != null && m.longitude != null
+        ? `${m.phrase} → ${m.latitude.toFixed(5)}, ${m.longitude.toFixed(5)}`
+        : `${m.phrase} (no GPS yet)`,
+    );
+    setPicker(null);
   }
 
   return (
@@ -45,9 +96,7 @@ export function App() {
           </div>
           <div className="pill">UI {connected ? "WS OK" : "WS…"}</div>
           <div className="pill">{state?.mode ?? "STANDBY"}</div>
-          <div className="pill">
-            Missions {state?.missions.filter((m) => m.status === "active").length ?? 0}
-          </div>
+          <div className="pill">Memory {state?.objects.length ?? 0}</div>
           <button className="btn danger" onClick={() => run("reset", resetDemo)} disabled={!!busy}>
             Demo Reset
           </button>
@@ -56,36 +105,41 @@ export function App() {
 
       <div className="main">
         <section className="panel pov-panel">
-          <div className="panel-title">Live POV · detections</div>
+          <div className="panel-title">Live POV · browser COCO-SSD</div>
           <LivePOV
             jpegBase64={state?.latestFrameJpegBase64 ?? null}
-            detections={state?.latestDetections ?? []}
+            detections={overlayDetections}
             source={state?.session?.videoStats?.lastVideoSource}
+            visionStatus={visionStatus}
           />
           <div className="actions">
             <input
               type="text"
-              value={trackTarget}
-              onChange={(e) => setTrackTarget(e.target.value)}
-              placeholder="track target (phone, backpack…)"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void run("recall", doRecall);
+              }}
+              placeholder="Where is my black laptop? / recall laptop"
             />
             <button
               className="btn primary"
-              onClick={() => run("track", () => track(trackTarget))}
+              onClick={() => run("recall", doRecall)}
               disabled={!!busy}
             >
-              Start Track Mission
-            </button>
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Where did I leave my black case phone?"
-            />
-            <button className="btn" onClick={() => run("recall", () => recall(query))} disabled={!!busy}>
               Recall
             </button>
           </div>
+          {recallNote && (
+            <div className="stack" style={{ paddingTop: 0, borderTop: "1px solid var(--line)" }}>
+              <div className="row">
+                <span className="k">Recall</span>
+                <span className="v" style={{ textAlign: "left", whiteSpace: "normal" }}>
+                  {recallNote}
+                </span>
+              </div>
+            </div>
+          )}
         </section>
 
         <aside className="side">
@@ -94,12 +148,12 @@ export function App() {
           <section className="panel">
             <div className="panel-title">Vision</div>
             <div className="scroll">
-              {(state?.latestDetections ?? []).length === 0 && (
+              {overlayDetections.length === 0 && (
                 <div className="det-item">
                   No detections yet — point camera at a phone, laptop, backpack…
                 </div>
               )}
-              {(state?.latestDetections ?? []).map((d) => (
+              {overlayDetections.map((d) => (
                 <div className="det-item" key={d.trackId}>
                   <div className="row">
                     <span className="k">{d.displayName}</span>
@@ -159,6 +213,15 @@ export function App() {
       </div>
 
       <Timeline events={state?.events ?? []} />
+
+      {picker && (
+        <RecallPicker
+          query={picker.query}
+          matches={picker.matches}
+          onPick={(m) => void run("pick", () => onPickMatch(m))}
+          onClose={() => setPicker(null)}
+        />
+      )}
     </div>
   );
 }

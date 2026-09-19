@@ -9,6 +9,9 @@ export default defineConfig({
     outDir: path.resolve(__dirname, "dist"),
     emptyOutDir: true,
   },
+  optimizeDeps: {
+    include: ["@tensorflow/tfjs", "@tensorflow-models/coco-ssd"],
+  },
   server: {
     port: 5173,
     proxy: {
