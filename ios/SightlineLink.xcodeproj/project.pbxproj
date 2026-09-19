@@ -1,0 +1,621 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		05546087DDDA07F0897F6572 /* DataExtensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0759E58BA1410D1541C9D04E /* DataExtensions.swift */; };
+		0626A93484A790D0FD6D55C9 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72DB13E9A748B0031E7CC516 /* Logger.swift */; };
+		08DBB0B495B686F638264E71 /* SightlineLinkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 731E18B6EECC48FB018A78B6 /* SightlineLinkTests.swift */; };
+		0A9531F76226BF73D169D1F7 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = 36812728F54D0901371A4FBB /* MWDATCore */; };
+		1126E2DC050D879783ABA80F /* ConnectionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DA0F4FEAEF3AF099898EC35 /* ConnectionState.swift */; };
+		12DDF517825E6DB755DE6E38 /* TelemetryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93CF0D410C12470B42F09C17 /* TelemetryCoordinator.swift */; };
+		1639D4DC76373BF0935CFC3C /* ConnectionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DA0F4FEAEF3AF099898EC35 /* ConnectionState.swift */; };
+		1843FC1A20389F59C4302E72 /* WebSocketClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00405C6C889C566A0783DA7 /* WebSocketClient.swift */; };
+		196023720F57ED6AF3ABE797 /* MetaWearablesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 648B73C32EE9F9FACEE779AE /* MetaWearablesService.swift */; };
+		1D4B8EE1D5E5468A2C8937BA /* AudioCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC2F605DE2E1D6E4E8395DE5 /* AudioCaptureService.swift */; };
+		1F8AD2C59038D63E124C425A /* StreamConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D661F0D868BE97FC04E0715 /* StreamConfiguration.swift */; };
+		202CBD91FCF0C5133BF16653 /* WebSocketClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00405C6C889C566A0783DA7 /* WebSocketClient.swift */; };
+		2068377F2A7A72334B6F32BC /* GlassesVideoService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 988F25A1BD8E340127983D75 /* GlassesVideoService.swift */; };
+		247AD8B1638810BD7556EE3B /* SensorModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 563B891E97204E07757C9AB5 /* SensorModels.swift */; };
+		2C1EE61B320D6F7DA966367A /* LocationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4EEFB569300F61CDAFC0EB3 /* LocationService.swift */; };
+		334CAFC2E1F51224608A376A /* Time.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A9139A164CF12B0060540B /* Time.swift */; };
+		3FAD4F05656A6E7947D57B6C /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = 9AEEE465CF2F7983C43BC00F /* MWDATCamera */; };
+		3FD79EC1F981079FB0432597 /* ConnectionStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA34CF03F7A7264E3495264A /* ConnectionStatusView.swift */; };
+		492AA203670DEFEA3D010AB1 /* Time.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A9139A164CF12B0060540B /* Time.swift */; };
+		5096054A03F86C960F4FDE53 /* DebugLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAE18DC9287C1655141FB517 /* DebugLogView.swift */; };
+		6A1AF2AB5B94CAE2F519CFAF /* VideoPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F2C53BA0FF00EBA6F442AF9 /* VideoPreviewView.swift */; };
+		7A4518CAB86EEAD45FE2D424 /* StreamConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D661F0D868BE97FC04E0715 /* StreamConfiguration.swift */; };
+		834AEB2525BF6C26AC9A5EC3 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72DB13E9A748B0031E7CC516 /* Logger.swift */; };
+		855E6372C3E53B7C3E317826 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = C2825AAF75ECA0E8735E6D99 /* MWDATMockDevice */; };
+		8709233DD188359D4C60754F /* TelemetryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C9CF33419940760AB268BB7 /* TelemetryModels.swift */; };
+		9647FC47B00F90CBDC0B6A08 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBA322E1639199284C2DA0B9 /* AppState.swift */; };
+		98DA92F4E84CFEC853EBE4B7 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80EF79298B7DA43CAABEC022 /* MainView.swift */; };
+		9F6052BFE5D7582A2C02CDB5 /* TelemetryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C9CF33419940760AB268BB7 /* TelemetryModels.swift */; };
+		AF7B0B5463E436C67301DCE6 /* NetworkRelayService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300A0E909DBB367DA67C3738 /* NetworkRelayService.swift */; };
+		BB6A63AE8C8F35CEE05B2938 /* SightlineLinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002EF027774D4F6043B34A80 /* SightlineLinkApp.swift */; };
+		BD68D505B21F0D82B0B054F9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CBB341CD987CB8DDFB20DF2C /* Assets.xcassets */; };
+		C6B311C7ED51DEFAA17541F9 /* BinaryPacketEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F7DB51221BBAF321774108D /* BinaryPacketEncoder.swift */; };
+		C83A72623942E3D3837EAECB /* MotionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63519C7425E57D6706EAF266 /* MotionService.swift */; };
+		C891DB6FF6AF6009AE964C77 /* RelayPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB16503C8F31E645E54DBDAD /* RelayPacket.swift */; };
+		DB2FFDDED88700B25FC1CCF5 /* RelayPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB16503C8F31E645E54DBDAD /* RelayPacket.swift */; };
+		E133CF397232EF5E0595D329 /* RelayProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B51599B2FE8C07BEA72F59 /* RelayProtocol.swift */; };
+		EA1CE66D489E98E91988635F /* DataExtensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0759E58BA1410D1541C9D04E /* DataExtensions.swift */; };
+		EA50B2852CEFE2236F51C611 /* PhoneCameraService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B760259790267AE03F0C2702 /* PhoneCameraService.swift */; };
+		F260A30E79B7E7F1A72379ED /* BinaryPacketEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F7DB51221BBAF321774108D /* BinaryPacketEncoder.swift */; };
+		F66EFE1FE6B5B8F60C93B5F0 /* SensorStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FDFA360D26B65FA6828DC92 /* SensorStatusView.swift */; };
+		F69688BD3788C552758205CA /* NetworkMonitorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 685BBB5EE046361E9C625E9B /* NetworkMonitorService.swift */; };
+		F8A9F506EDC79F84EAFC996E /* BackendConfigurationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D3F43B85DF110710401F1A1 /* BackendConfigurationView.swift */; };
+		FB7028E5EE3A801919C5EC50 /* SensorModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 563B891E97204E07757C9AB5 /* SensorModels.swift */; };
+		FBF7B6CF8DF307821090113C /* RelayProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B51599B2FE8C07BEA72F59 /* RelayProtocol.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		002EF027774D4F6043B34A80 /* SightlineLinkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SightlineLinkApp.swift; sourceTree = "<group>"; };
+		0759E58BA1410D1541C9D04E /* DataExtensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataExtensions.swift; sourceTree = "<group>"; };
+		1FDFA360D26B65FA6828DC92 /* SensorStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorStatusView.swift; sourceTree = "<group>"; };
+		2C9CF33419940760AB268BB7 /* TelemetryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryModels.swift; sourceTree = "<group>"; };
+		300A0E909DBB367DA67C3738 /* NetworkRelayService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkRelayService.swift; sourceTree = "<group>"; };
+		3D3F43B85DF110710401F1A1 /* BackendConfigurationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendConfigurationView.swift; sourceTree = "<group>"; };
+		410275367EECC373536C73A4 /* SightlineLink.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SightlineLink.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4F2C53BA0FF00EBA6F442AF9 /* VideoPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPreviewView.swift; sourceTree = "<group>"; };
+		563B891E97204E07757C9AB5 /* SensorModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorModels.swift; sourceTree = "<group>"; };
+		56EBA00BE06AD2AEEFB31774 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		63519C7425E57D6706EAF266 /* MotionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionService.swift; sourceTree = "<group>"; };
+		648B73C32EE9F9FACEE779AE /* MetaWearablesService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetaWearablesService.swift; sourceTree = "<group>"; };
+		685BBB5EE046361E9C625E9B /* NetworkMonitorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitorService.swift; sourceTree = "<group>"; };
+		72DB13E9A748B0031E7CC516 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
+		731E18B6EECC48FB018A78B6 /* SightlineLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SightlineLinkTests.swift; sourceTree = "<group>"; };
+		80EF79298B7DA43CAABEC022 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
+		86A9139A164CF12B0060540B /* Time.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Time.swift; sourceTree = "<group>"; };
+		8D661F0D868BE97FC04E0715 /* StreamConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamConfiguration.swift; sourceTree = "<group>"; };
+		8DA0F4FEAEF3AF099898EC35 /* ConnectionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionState.swift; sourceTree = "<group>"; };
+		8F7DB51221BBAF321774108D /* BinaryPacketEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinaryPacketEncoder.swift; sourceTree = "<group>"; };
+		93B51599B2FE8C07BEA72F59 /* RelayProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayProtocol.swift; sourceTree = "<group>"; };
+		93CF0D410C12470B42F09C17 /* TelemetryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryCoordinator.swift; sourceTree = "<group>"; };
+		988F25A1BD8E340127983D75 /* GlassesVideoService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassesVideoService.swift; sourceTree = "<group>"; };
+		A813875A5382A3EA0EBB1550 /* SightlineLinkTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SightlineLinkTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B760259790267AE03F0C2702 /* PhoneCameraService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneCameraService.swift; sourceTree = "<group>"; };
+		BAE18DC9287C1655141FB517 /* DebugLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogView.swift; sourceTree = "<group>"; };
+		CBB341CD987CB8DDFB20DF2C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D00405C6C889C566A0783DA7 /* WebSocketClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketClient.swift; sourceTree = "<group>"; };
+		D4EEFB569300F61CDAFC0EB3 /* LocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationService.swift; sourceTree = "<group>"; };
+		DA34CF03F7A7264E3495264A /* ConnectionStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStatusView.swift; sourceTree = "<group>"; };
+		EC2F605DE2E1D6E4E8395DE5 /* AudioCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureService.swift; sourceTree = "<group>"; };
+		FB16503C8F31E645E54DBDAD /* RelayPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayPacket.swift; sourceTree = "<group>"; };
+		FBA322E1639199284C2DA0B9 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		3C83A198F4A49AAF971A3256 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0A9531F76226BF73D169D1F7 /* MWDATCore in Frameworks */,
+				3FAD4F05656A6E7947D57B6C /* MWDATCamera in Frameworks */,
+				855E6372C3E53B7C3E317826 /* MWDATMockDevice in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0661DEF901F889D63AA8D272 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				3D3F43B85DF110710401F1A1 /* BackendConfigurationView.swift */,
+				DA34CF03F7A7264E3495264A /* ConnectionStatusView.swift */,
+				BAE18DC9287C1655141FB517 /* DebugLogView.swift */,
+				80EF79298B7DA43CAABEC022 /* MainView.swift */,
+				1FDFA360D26B65FA6828DC92 /* SensorStatusView.swift */,
+				4F2C53BA0FF00EBA6F442AF9 /* VideoPreviewView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		24441E7C80F5B0B6FC09EA88 = {
+			isa = PBXGroup;
+			children = (
+				DF67F2108595FB6536A25B2D /* SightlineLink */,
+				7E2832E6B43A7BF2DDDA9A4A /* SightlineLinkTests */,
+				9A853711EEE814D7379920BA /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		3DA28A2F260E34959376623F /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				EC2F605DE2E1D6E4E8395DE5 /* AudioCaptureService.swift */,
+				988F25A1BD8E340127983D75 /* GlassesVideoService.swift */,
+				D4EEFB569300F61CDAFC0EB3 /* LocationService.swift */,
+				648B73C32EE9F9FACEE779AE /* MetaWearablesService.swift */,
+				63519C7425E57D6706EAF266 /* MotionService.swift */,
+				685BBB5EE046361E9C625E9B /* NetworkMonitorService.swift */,
+				300A0E909DBB367DA67C3738 /* NetworkRelayService.swift */,
+				B760259790267AE03F0C2702 /* PhoneCameraService.swift */,
+				93CF0D410C12470B42F09C17 /* TelemetryCoordinator.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		7221A8EC60D3400E9A7F2159 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				8F7DB51221BBAF321774108D /* BinaryPacketEncoder.swift */,
+				FB16503C8F31E645E54DBDAD /* RelayPacket.swift */,
+				93B51599B2FE8C07BEA72F59 /* RelayProtocol.swift */,
+				D00405C6C889C566A0783DA7 /* WebSocketClient.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		7E2832E6B43A7BF2DDDA9A4A /* SightlineLinkTests */ = {
+			isa = PBXGroup;
+			children = (
+				731E18B6EECC48FB018A78B6 /* SightlineLinkTests.swift */,
+			);
+			path = SightlineLinkTests;
+			sourceTree = "<group>";
+		};
+		9A853711EEE814D7379920BA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				410275367EECC373536C73A4 /* SightlineLink.app */,
+				A813875A5382A3EA0EBB1550 /* SightlineLinkTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		B521209699F8181DF650FA43 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				0759E58BA1410D1541C9D04E /* DataExtensions.swift */,
+				72DB13E9A748B0031E7CC516 /* Logger.swift */,
+				86A9139A164CF12B0060540B /* Time.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		C3A0389FBABF5EE09B24880F /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				8DA0F4FEAEF3AF099898EC35 /* ConnectionState.swift */,
+				563B891E97204E07757C9AB5 /* SensorModels.swift */,
+				8D661F0D868BE97FC04E0715 /* StreamConfiguration.swift */,
+				2C9CF33419940760AB268BB7 /* TelemetryModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		DF67F2108595FB6536A25B2D /* SightlineLink */ = {
+			isa = PBXGroup;
+			children = (
+				FF9FD8A7BA8C1136E2669C01 /* App */,
+				C3A0389FBABF5EE09B24880F /* Models */,
+				7221A8EC60D3400E9A7F2159 /* Networking */,
+				3DA28A2F260E34959376623F /* Services */,
+				B521209699F8181DF650FA43 /* Utilities */,
+				0661DEF901F889D63AA8D272 /* Views */,
+				CBB341CD987CB8DDFB20DF2C /* Assets.xcassets */,
+				56EBA00BE06AD2AEEFB31774 /* Info.plist */,
+			);
+			path = SightlineLink;
+			sourceTree = "<group>";
+		};
+		FF9FD8A7BA8C1136E2669C01 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				FBA322E1639199284C2DA0B9 /* AppState.swift */,
+				002EF027774D4F6043B34A80 /* SightlineLinkApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		71B7F9C706086C59300C734F /* SightlineLink */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FDE5A8BD0E4CA8F392511B08 /* Build configuration list for PBXNativeTarget "SightlineLink" */;
+			buildPhases = (
+				2DDCF4F07209E45BF28F3204 /* Sources */,
+				A2D8A9D9FD55F8FB01E7B9D8 /* Resources */,
+				3C83A198F4A49AAF971A3256 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SightlineLink;
+			packageProductDependencies = (
+				36812728F54D0901371A4FBB /* MWDATCore */,
+				9AEEE465CF2F7983C43BC00F /* MWDATCamera */,
+				C2825AAF75ECA0E8735E6D99 /* MWDATMockDevice */,
+			);
+			productName = SightlineLink;
+			productReference = 410275367EECC373536C73A4 /* SightlineLink.app */;
+			productType = "com.apple.product-type.application";
+		};
+		F0D298BF16E5D3FE9EC17594 /* SightlineLinkTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 16429275701F29FA57172D32 /* Build configuration list for PBXNativeTarget "SightlineLinkTests" */;
+			buildPhases = (
+				5EE7F50D575947A6BF3D98D4 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SightlineLinkTests;
+			packageProductDependencies = (
+			);
+			productName = SightlineLinkTests;
+			productReference = A813875A5382A3EA0EBB1550 /* SightlineLinkTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		D361A906712CFB93BCBF8E3C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					71B7F9C706086C59300C734F = {
+						DevelopmentTeam = RT83AN2JT6;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 2F7DD12D47B5949179AF65B5 /* Build configuration list for PBXProject "SightlineLink" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 24441E7C80F5B0B6FC09EA88;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A237BA49C7139152F575C5D6 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 9A853711EEE814D7379920BA /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				71B7F9C706086C59300C734F /* SightlineLink */,
+				F0D298BF16E5D3FE9EC17594 /* SightlineLinkTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A2D8A9D9FD55F8FB01E7B9D8 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BD68D505B21F0D82B0B054F9 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		2DDCF4F07209E45BF28F3204 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9647FC47B00F90CBDC0B6A08 /* AppState.swift in Sources */,
+				1D4B8EE1D5E5468A2C8937BA /* AudioCaptureService.swift in Sources */,
+				F8A9F506EDC79F84EAFC996E /* BackendConfigurationView.swift in Sources */,
+				F260A30E79B7E7F1A72379ED /* BinaryPacketEncoder.swift in Sources */,
+				1639D4DC76373BF0935CFC3C /* ConnectionState.swift in Sources */,
+				3FD79EC1F981079FB0432597 /* ConnectionStatusView.swift in Sources */,
+				05546087DDDA07F0897F6572 /* DataExtensions.swift in Sources */,
+				5096054A03F86C960F4FDE53 /* DebugLogView.swift in Sources */,
+				2068377F2A7A72334B6F32BC /* GlassesVideoService.swift in Sources */,
+				2C1EE61B320D6F7DA966367A /* LocationService.swift in Sources */,
+				834AEB2525BF6C26AC9A5EC3 /* Logger.swift in Sources */,
+				98DA92F4E84CFEC853EBE4B7 /* MainView.swift in Sources */,
+				196023720F57ED6AF3ABE797 /* MetaWearablesService.swift in Sources */,
+				C83A72623942E3D3837EAECB /* MotionService.swift in Sources */,
+				F69688BD3788C552758205CA /* NetworkMonitorService.swift in Sources */,
+				AF7B0B5463E436C67301DCE6 /* NetworkRelayService.swift in Sources */,
+				EA50B2852CEFE2236F51C611 /* PhoneCameraService.swift in Sources */,
+				C891DB6FF6AF6009AE964C77 /* RelayPacket.swift in Sources */,
+				FBF7B6CF8DF307821090113C /* RelayProtocol.swift in Sources */,
+				247AD8B1638810BD7556EE3B /* SensorModels.swift in Sources */,
+				F66EFE1FE6B5B8F60C93B5F0 /* SensorStatusView.swift in Sources */,
+				BB6A63AE8C8F35CEE05B2938 /* SightlineLinkApp.swift in Sources */,
+				1F8AD2C59038D63E124C425A /* StreamConfiguration.swift in Sources */,
+				12DDF517825E6DB755DE6E38 /* TelemetryCoordinator.swift in Sources */,
+				9F6052BFE5D7582A2C02CDB5 /* TelemetryModels.swift in Sources */,
+				492AA203670DEFEA3D010AB1 /* Time.swift in Sources */,
+				6A1AF2AB5B94CAE2F519CFAF /* VideoPreviewView.swift in Sources */,
+				1843FC1A20389F59C4302E72 /* WebSocketClient.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5EE7F50D575947A6BF3D98D4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C6B311C7ED51DEFAA17541F9 /* BinaryPacketEncoder.swift in Sources */,
+				1126E2DC050D879783ABA80F /* ConnectionState.swift in Sources */,
+				EA1CE66D489E98E91988635F /* DataExtensions.swift in Sources */,
+				0626A93484A790D0FD6D55C9 /* Logger.swift in Sources */,
+				DB2FFDDED88700B25FC1CCF5 /* RelayPacket.swift in Sources */,
+				E133CF397232EF5E0595D329 /* RelayProtocol.swift in Sources */,
+				FB7028E5EE3A801919C5EC50 /* SensorModels.swift in Sources */,
+				08DBB0B495B686F638264E71 /* SightlineLinkTests.swift in Sources */,
+				7A4518CAB86EEAD45FE2D424 /* StreamConfiguration.swift in Sources */,
+				8709233DD188359D4C60754F /* TelemetryModels.swift in Sources */,
+				334CAFC2E1F51224608A376A /* Time.swift in Sources */,
+				202CBD91FCF0C5133BF16653 /* WebSocketClient.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		2FB69CC3A9F6C29E3CCD0151 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		3DBFFD4791DB981D7B1CDB25 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.sightline.link.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		7C9FB1D214366D0133A47B06 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = RT83AN2JT6;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SightlineLink/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.sightline.link;
+				PRODUCT_NAME = SightlineLink;
+				SDKROOT = iphoneos;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		8388EAD8FC9741AFC96C46BA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = RT83AN2JT6;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SightlineLink/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.sightline.link;
+				PRODUCT_NAME = SightlineLink;
+				SDKROOT = iphoneos;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C5A4D1FAEA4B079D43745C19 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.sightline.link.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		F93810E08859306AE7736A2E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		16429275701F29FA57172D32 /* Build configuration list for PBXNativeTarget "SightlineLinkTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C5A4D1FAEA4B079D43745C19 /* Debug */,
+				3DBFFD4791DB981D7B1CDB25 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		2F7DD12D47B5949179AF65B5 /* Build configuration list for PBXProject "SightlineLink" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F93810E08859306AE7736A2E /* Debug */,
+				2FB69CC3A9F6C29E3CCD0151 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FDE5A8BD0E4CA8F392511B08 /* Build configuration list for PBXNativeTarget "SightlineLink" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8388EAD8FC9741AFC96C46BA /* Debug */,
+				7C9FB1D214366D0133A47B06 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A237BA49C7139152F575C5D6 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/facebook/meta-wearables-dat-ios";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		36812728F54D0901371A4FBB /* MWDATCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A237BA49C7139152F575C5D6 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATCore;
+		};
+		9AEEE465CF2F7983C43BC00F /* MWDATCamera */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A237BA49C7139152F575C5D6 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATCamera;
+		};
+		C2825AAF75ECA0E8735E6D99 /* MWDATMockDevice */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A237BA49C7139152F575C5D6 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATMockDevice;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = D361A906712CFB93BCBF8E3C /* Project object */;
+}
