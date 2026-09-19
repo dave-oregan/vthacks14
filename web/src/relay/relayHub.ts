@@ -31,10 +31,18 @@ export interface RelayAudioChunk {
   pcm: Buffer;
 }
 
+export interface RelayMotionSample {
+  sessionId: string;
+  timestampMs: number;
+  userAccelerationG: { x: number; y: number; z: number };
+  gravityG: { x: number; y: number; z: number } | null;
+  rotationRateRadPerSec: { x: number; y: number; z: number } | null;
+}
+
 export interface RelayHubEvents {
   hello: [SessionSnapshot];
   location: [GeoPoint & { sessionId: string }];
-  motion: [{ sessionId: string; timestampMs: number }];
+  motion: [RelayMotionSample];
   video: [RelayVideoFrame];
   audio: [RelayAudioChunk];
   stream_event: [{ sessionId: string; event: string; payload: Record<string, unknown> }];
@@ -172,7 +180,24 @@ export class RelayHub extends EventEmitter {
     if (type === "motion") {
       this.session.lastMotionAtMs = Number(msg.timestampMs ?? nowMs());
       this.session.updatedAtMs = nowMs();
-      this.emit("motion", { sessionId, timestampMs: this.session.lastMotionAtMs });
+      const ua = (msg.userAccelerationG ?? {}) as Record<string, unknown>;
+      const gr = (msg.gravityG ?? null) as Record<string, unknown> | null;
+      const rr = (msg.rotationRateRadPerSec ?? null) as Record<string, unknown> | null;
+      this.emit("motion", {
+        sessionId,
+        timestampMs: this.session.lastMotionAtMs,
+        userAccelerationG: {
+          x: Number(ua.x ?? 0),
+          y: Number(ua.y ?? 0),
+          z: Number(ua.z ?? 0),
+        },
+        gravityG: gr
+          ? { x: Number(gr.x ?? 0), y: Number(gr.y ?? 0), z: Number(gr.z ?? 0) }
+          : null,
+        rotationRateRadPerSec: rr
+          ? { x: Number(rr.x ?? 0), y: Number(rr.y ?? 0), z: Number(rr.z ?? 0) }
+          : null,
+      });
       return;
     }
 

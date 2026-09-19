@@ -17,9 +17,11 @@ import { hasGemini } from "./gemini/client.js";
 import { answerRecallQuery, toRecallMatch } from "./gemini/reasoner.js";
 import { listDemoAgents, verifyAgentAccess } from "./ans/trustGate.js";
 import { speak } from "./voice/elevenlabs.js";
+import { FallDetector, type FallEvent } from "./motion/fallDetector.js";
 import type {
   DashboardState,
   Detection,
+  EmergencyAlert,
   GeoPoint,
   MemoryObject,
   Mission,
@@ -44,6 +46,10 @@ export class SightlineApp extends EventEmitter {
   private lastPreviewSentAt = 0;
   private lastStateBroadcastAt = 0;
   private previewBusy = false;
+  private fallDetector = new FallDetector();
+  private emergencyAlert: EmergencyAlert | null = null;
+  /** Survives brief session gaps so fall alerts still have GPS. */
+  private lastKnownLocation: GeoPoint | null = null;
 
   constructor() {
     super();
@@ -63,8 +69,34 @@ export class SightlineApp extends EventEmitter {
     });
 
     this.relay.on("location", (geo: GeoPoint & { sessionId: string }) => {
+      if (Number.isFinite(geo.latitude) && Number.isFinite(geo.longitude)) {
+        this.lastKnownLocation = {
+          latitude: geo.latitude,
+          longitude: geo.longitude,
+          altitudeMeters: geo.altitudeMeters,
+          horizontalAccuracyMeters: geo.horizontalAccuracyMeters,
+          timestampMs: geo.timestampMs,
+        };
+        // Refresh an open emergency alert with the latest fix.
+        if (this.emergencyAlert?.active) {
+          this.emergencyAlert = {
+            ...this.emergencyAlert,
+            location: this.lastKnownLocation,
+            message: this.emergencyMessage(
+              this.emergencyAlert.peakImpactG,
+              this.lastKnownLocation,
+            ),
+          };
+          this.emit("emergency", this.emergencyAlert);
+        }
+      }
       void this.evaluateLeaveBehind(geo);
       this.broadcast();
+    });
+
+    this.relay.on("motion", (sample) => {
+      const fall = this.fallDetector.push(sample);
+      if (fall) this.triggerEmergency(fall);
     });
 
     this.relay.on("video", (frame: RelayVideoFrame) => {
@@ -410,6 +442,90 @@ export class SightlineApp extends EventEmitter {
     }
   }
 
+  simulateFall(): EmergencyAlert {
+    // Always allow demo button re-fire after cancel.
+    this.fallDetector.resetCooldown();
+    const sessionId = this.relay.getSession()?.sessionId ?? "demo";
+    const fall = this.fallDetector.simulate(sessionId);
+    return this.triggerEmergency(fall);
+  }
+
+  dismissEmergency(): void {
+    this.fallDetector.resetCooldown();
+    this.emergencyAlert = null;
+    this.mode = this.relay.getSession()?.connected ? "LIVE" : "STANDBY";
+    this.emit("emergency", null);
+    this.broadcast(true);
+  }
+
+  private triggerEmergency(fall: FallEvent): EmergencyAlert {
+    const loc = this.resolvePhoneLocation();
+    const alert: EmergencyAlert = {
+      active: true,
+      demo: true,
+      triggeredAtMs: fall.triggeredAtMs,
+      peakImpactG: fall.peakImpactG,
+      freefallMs: fall.freefallMs,
+      reason: fall.reason,
+      message: this.emergencyMessage(fall.peakImpactG, loc),
+      location: loc,
+    };
+    // Replace entirely so the UI always remounts on re-trigger.
+    this.emergencyAlert = alert;
+    this.mode = "EMERGENCY";
+    this.store.addEvent({
+      type: "possible_emergency",
+      timestampMs: fall.triggeredAtMs,
+      sessionId: fall.sessionId,
+      severity: "critical",
+      description: alert.message,
+      location: loc,
+    });
+    console.warn(
+      `[emergency:demo] ${fall.reason} peak=${fall.peakImpactG}g loc=${
+        loc ? `${loc.latitude.toFixed(5)},${loc.longitude.toFixed(5)}` : "none"
+      }`,
+    );
+    this.emit("emergency", alert);
+    this.broadcast(true);
+    void speak(
+      loc
+        ? `SIGHTLINE demo alert. Possible fall detected near ${loc.latitude.toFixed(3)}, ${loc.longitude.toFixed(3)}. Contacting nine one one. This is a demonstration only.`
+        : "SIGHTLINE demo alert. Possible fall detected. Contacting nine one one. This is a demonstration only.",
+    ).then((voice) => this.emit("voice", voice));
+    return alert;
+  }
+
+  private resolvePhoneLocation(): GeoPoint | null {
+    const sessionLoc = this.relay.getSession()?.lastLocation ?? null;
+    const candidates = [sessionLoc, this.lastKnownLocation].filter(
+      (g): g is GeoPoint =>
+        Boolean(g) && Number.isFinite(g!.latitude) && Number.isFinite(g!.longitude),
+    );
+    if (candidates.length > 0) {
+      // Prefer the freshest fix.
+      candidates.sort((a, b) => (b.timestampMs ?? 0) - (a.timestampMs ?? 0));
+      return candidates[0]!;
+    }
+    // Last resort: most recent remembered object with geo (same phone session area).
+    const withGeo = this.store
+      .listObjects()
+      .filter((o) => o.lastLocation && Number.isFinite(o.lastLocation.latitude));
+    withGeo.sort((a, b) => b.lastSeenAtMs - a.lastSeenAtMs);
+    return withGeo[0]?.lastLocation ?? null;
+  }
+
+  private emergencyMessage(peakG: number, loc: GeoPoint | null): string {
+    if (loc) {
+      const acc =
+        loc.horizontalAccuracyMeters != null && Number.isFinite(loc.horizontalAccuracyMeters)
+          ? ` (±${Math.round(loc.horizontalAccuracyMeters)}m)`
+          : "";
+      return `Possible hard fall detected (${peakG}g). DEMO: would contact 911 at ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}${acc}. No real call is placed.`;
+    }
+    return `Possible hard fall detected (${peakG}g). DEMO: would contact 911 — waiting for phone GPS fix. No real call is placed.`;
+  }
+
   startTrackMission(targetQuery: string): Mission {
     const hits = this.store.searchObjects(targetQuery);
     const target = hits[0];
@@ -507,6 +623,7 @@ export class SightlineApp extends EventEmitter {
     this.lastAccessRequest = null;
     this.agentStates = listDemoAgents();
     this.transcriptSnippet = "";
+    this.emergencyAlert = null;
     this.mode = this.relay.getSession()?.connected ? "LIVE" : "STANDBY";
     this.broadcast();
   }
@@ -527,6 +644,7 @@ export class SightlineApp extends EventEmitter {
       lastAccessRequest: this.lastAccessRequest,
       mode: this.mode,
       transcriptSnippet: this.transcriptSnippet,
+      emergencyAlert: this.emergencyAlert,
     };
   }
 

@@ -63,13 +63,20 @@ server.on("upgrade", (req, socket, head) => {
           ws.send(JSON.stringify({ type: "voice", payload: voice }));
         }
       };
+      const onEmergency = (alert: unknown) => {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: "emergency", payload: alert }));
+        }
+      };
       appCore.on("dashboard", onDash);
       appCore.on("frame", onFrame);
       appCore.on("voice", onVoice);
+      appCore.on("emergency", onEmergency);
       ws.on("close", () => {
         appCore.off("dashboard", onDash);
         appCore.off("frame", onFrame);
         appCore.off("voice", onVoice);
+        appCore.off("emergency", onEmergency);
       });
     });
     return;

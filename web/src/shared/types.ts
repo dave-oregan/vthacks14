@@ -117,6 +117,17 @@ export interface SessionSnapshot {
   updatedAtMs: number;
 }
 
+export interface EmergencyAlert {
+  active: boolean;
+  demo: true;
+  triggeredAtMs: number;
+  peakImpactG: number;
+  freefallMs: number;
+  reason: string;
+  message: string;
+  location?: GeoPoint | null;
+}
+
 export interface DashboardState {
   live: boolean;
   session: SessionSnapshot | null;
@@ -134,4 +145,5 @@ export interface DashboardState {
   lastAccessRequest: AgentAccessRequest | null;
   mode: string;
   transcriptSnippet: string;
+  emergencyAlert: EmergencyAlert | null;
 }

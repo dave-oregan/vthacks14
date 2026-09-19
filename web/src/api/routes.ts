@@ -84,6 +84,15 @@ export function createApiRouter(app: SightlineApp) {
     res.json({ ok: true, ...result });
   });
 
+  router.post("/demo/fall", (_req, res) => {
+    res.json({ alert: app.simulateFall() });
+  });
+
+  router.post("/emergency/dismiss", (_req, res) => {
+    app.dismissEmergency();
+    res.json({ ok: true });
+  });
+
   router.post("/demo/reset", (_req, res) => {
     app.resetDemo();
     res.json({ ok: true });

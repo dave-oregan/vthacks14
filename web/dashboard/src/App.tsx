@@ -7,10 +7,20 @@ import { AgentPanel } from "./components/AgentPanel";
 import { Timeline } from "./components/Timeline";
 import { LinkPanel } from "./components/LinkPanel";
 import { RecallPicker } from "./components/RecallPicker";
+import { EmergencyModal } from "./components/EmergencyModal";
 
 export function App() {
-  const { state, connected, recall, selectRecall, verifyAgent, simulateUnknown, resetDemo } =
-    useSightline();
+  const {
+    state,
+    connected,
+    recall,
+    selectRecall,
+    verifyAgent,
+    simulateUnknown,
+    simulateFall,
+    dismissEmergency,
+    resetDemo,
+  } = useSightline();
   const [query, setQuery] = useState("Where is my black laptop?");
   const [busy, setBusy] = useState<string | null>(null);
   const [recallNote, setRecallNote] = useState<string | null>(null);
@@ -97,6 +107,14 @@ export function App() {
           <div className="pill">UI {connected ? "WS OK" : "WS…"}</div>
           <div className="pill">{state?.mode ?? "STANDBY"}</div>
           <div className="pill">Memory {state?.objects.length ?? 0}</div>
+          <button
+            className="btn danger"
+            onClick={() => run("fall", simulateFall)}
+            disabled={!!busy}
+            title="Demo only — does not call 911"
+          >
+            Simulate Fall → 911
+          </button>
           <button className="btn danger" onClick={() => run("reset", resetDemo)} disabled={!!busy}>
             Demo Reset
           </button>
@@ -220,6 +238,14 @@ export function App() {
           matches={picker.matches}
           onPick={(m) => void run("pick", () => onPickMatch(m))}
           onClose={() => setPicker(null)}
+        />
+      )}
+
+      {state?.emergencyAlert?.active && (
+        <EmergencyModal
+          key={state.emergencyAlert.triggeredAtMs}
+          alert={state.emergencyAlert}
+          onDismiss={() => void run("dismiss", dismissEmergency)}
         />
       )}
     </div>

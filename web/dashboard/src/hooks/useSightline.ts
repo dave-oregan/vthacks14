@@ -39,6 +39,16 @@ export type DashState = {
     decision: string;
     requestedScopes: string[];
   } | null;
+  emergencyAlert?: {
+    active: boolean;
+    demo: true;
+    triggeredAtMs: number;
+    peakImpactG: number;
+    freefallMs: number;
+    reason: string;
+    message: string;
+    location?: { latitude: number; longitude: number } | null;
+  } | null;
   session: {
     connected: boolean;
     sessionId: string;
@@ -90,8 +100,20 @@ export function useSightline() {
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data) as { type: string; payload: unknown };
-        if (msg.type === "state" || msg.type === "frame") {
+        if (msg.type === "state" || msg.type === "frame" || msg.type === "emergency") {
           if (msg.type === "state") setState(msg.payload as DashState);
+          if (msg.type === "emergency") {
+            const alert = msg.payload as DashState["emergencyAlert"] | null;
+            setState((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    emergencyAlert: alert,
+                    mode: alert?.active ? "EMERGENCY" : prev.mode === "EMERGENCY" ? "LIVE" : prev.mode,
+                  }
+                : prev,
+            );
+          }
           if (msg.type === "frame") {
             const frame = msg.payload as {
               jpegBase64: string | null;
@@ -170,6 +192,40 @@ export function useSightline() {
     await fetch("/api/ans/simulate-unknown", { method: "POST" });
   }
 
+  async function simulateFall() {
+    const res = await fetch("/api/demo/fall", { method: "POST" });
+    const data = (await res.json()) as { alert?: DashState["emergencyAlert"] };
+    if (data.alert) {
+      setState((prev) => {
+        if (!prev) return prev;
+        const loc =
+          data.alert?.location ??
+          prev.session?.lastLocation ??
+          null;
+        const alert = data.alert
+          ? {
+              ...data.alert,
+              location: loc,
+            }
+          : null;
+        return { ...prev, emergencyAlert: alert, mode: "EMERGENCY" };
+      });
+    }
+  }
+
+  async function dismissEmergency() {
+    await fetch("/api/emergency/dismiss", { method: "POST" });
+    setState((prev) =>
+      prev
+        ? {
+            ...prev,
+            emergencyAlert: null,
+            mode: prev.mode === "EMERGENCY" ? "LIVE" : prev.mode,
+          }
+        : prev,
+    );
+  }
+
   async function resetDemo() {
     await fetch("/api/demo/reset", { method: "POST" });
   }
@@ -181,6 +237,8 @@ export function useSightline() {
     selectRecall,
     verifyAgent,
     simulateUnknown,
+    simulateFall,
+    dismissEmergency,
     resetDemo,
   };
 }
