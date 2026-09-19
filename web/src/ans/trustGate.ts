@@ -2,14 +2,7 @@ import { v4 as uuid } from "uuid";
 import { config } from "../config.js";
 import type { AgentAccessRequest } from "../shared/types.js";
 import type { MemoryStore } from "../memory/store.js";
-
-const VERIFIED = new Set([
-  `ans://v1.0.0.observer.${config.ansTeamDomain}`,
-  `ans://v1.0.0.memory.${config.ansTeamDomain}`,
-  `ans://v1.0.0.guardian.${config.ansTeamDomain}`,
-  `ans://v1.0.0.action.${config.ansTeamDomain}`,
-  `ans://v1.0.0.reasoner.${config.ansTeamDomain}`,
-]);
+import { verifyAnsIdentity } from "./godaddy.js";
 
 export function listDemoAgents() {
   return [
@@ -46,13 +39,13 @@ export function listDemoAgents() {
   ];
 }
 
-export function verifyAgentAccess(
+export async function verifyAgentAccess(
   store: MemoryStore,
   agentAnsName: string,
   requestedScopes: string[],
   missionId?: string,
-): AgentAccessRequest {
-  const allowed = VERIFIED.has(agentAnsName);
+): Promise<AgentAccessRequest> {
+  const allowed = await verifyAnsIdentity(agentAnsName);
   const req: AgentAccessRequest = {
     id: uuid(),
     agentAnsName,
