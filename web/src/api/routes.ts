@@ -15,7 +15,20 @@ import { getLatestVoiceClip } from "../voice/voiceCache.js";
 
 export function createApiRouter(app: SightlineApp) {
   const router = express.Router();
-  router.use(cors());
+  router.use(
+    cors({
+      origin: true,
+      // Lets https://sightline.surf probe the local Mission Control session.
+      allowedHeaders: ["Content-Type", "Access-Control-Request-Private-Network"],
+    }),
+  );
+  router.use((req, res, next) => {
+    if (req.headers["access-control-request-private-network"] === "true") {
+      res.setHeader("Access-Control-Allow-Private-Network", "true");
+    }
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
+    next();
+  });
   router.use(express.json({ limit: "2mb" }));
 
   router.get("/health", (_req, res) => {
@@ -40,7 +53,13 @@ export function createApiRouter(app: SightlineApp) {
     res.json({ status: mongoStatus(), events: await recentPersistedEvents(limit) });
   });
 
-  // Speak an arbitrary line through ElevenLabs and push it to the dashboard.
+  router.get("/ping", (_req, res) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
+    res.setHeader("Cache-Control", "no-store");
+    res.status(204).end();
+  });
+
   // Lets us verify the whole voice path without faking a fall.
   router.post("/voice/test", async (req, res) => {
     const text =
