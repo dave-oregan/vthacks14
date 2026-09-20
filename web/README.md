@@ -61,6 +61,42 @@ See `../ios/PROTOCOL.md`.
 6. **Recall** — ask where an object was last seen
 7. **ANS** — verified team agents vs simulated unknown (blocked)
 8. **Mission Control** — live POV, boxes, memory cards, agents, timeline
+9. **Guardian Mode** — first-responder situational awareness (see below)
+
+## Guardian Mode
+
+Guardian Mode turns SIGHTLINE into a real-time situational-awareness and **visual memory** layer for first responders (police, fire, EMS, emergency management).
+
+**Core principle:** *SIGHTLINE surfaces observations. Humans make decisions.*
+
+| Detection (OK) | Judgment (not done) |
+|----------------|---------------------|
+| “Possible firearm detected — 91%” | “This person is dangerous” |
+| “Possible physical altercation” | “Hostility score 87%” |
+| “Plate ABC-1234 observed” | “Suspect vehicle” |
+| “Possible responder distress” | “Officer is down / guilt assumed” |
+
+Guardian emits typed `GuardianEvent` records (weapon/vehicle/safety resource/hazard/distress/…) with confidence, severity, GPS, and optional frame crop. There is **no Danger Meter** and **no Hostility Score**.
+
+### Demo (deterministic)
+
+1. Toggle **Guardian ON** in Mission Control.
+2. Use **Demo inject** buttons (Plate / AED / Firearm\* / Distress / …) — Firearm\* uses **simulated training data**, not a real weapon.
+3. Ask memory: e.g. `Where was the last AED?`
+4. **Simulate Distress** = motion fall signal; combine with demo Distress inject (audio “help”) for multimodal fusion.
+
+```bash
+# API
+curl -X POST localhost:8000/api/mode/guardian -H 'content-type: application/json' -d '{"enabled":true}'
+curl -X POST localhost:8000/api/guardian/demo/plate
+curl -X POST localhost:8000/api/guardian/query -H 'content-type: application/json' -d '{"query":"What plate did I see?"}'
+```
+
+### Tests
+
+```bash
+cd web && npm test
+```
 
 ## Optional env
 

@@ -1,12 +1,21 @@
 /**
  * Local appearance cues from bbox pixels — no LLM, no hallucination.
  * Produces phrases like "black laptop", "clear plastic bottle", "silver laptop".
+ * Never attaches skin/clothing color to people or body parts (discriminatory).
  */
 import sharp from "sharp";
 import type { BBox, Detection } from "../shared/types.js";
 import { normalizeLabel } from "../memory/store.js";
 
 type Rgb = { r: number; g: number; b: number };
+
+/** Labels where color descriptors must never be applied. */
+const NO_COLOR_LABEL_RE =
+  /\b(person|people|pedestrian|human|man|woman|boy|girl|child|crowd|fist|hand|face|head|arm|leg|body)\b/i;
+
+export function isHumanSubjectLabel(label: string): boolean {
+  return NO_COLOR_LABEL_RE.test(label);
+}
 
 export async function describeDetectionsLocally(
   jpeg: Buffer,
@@ -22,6 +31,17 @@ export async function describeDetectionsLocally(
 
 async function describeOne(jpeg: Buffer, det: Detection): Promise<Detection> {
   const label = normalizeLabel(det.label);
+
+  // People / body parts: label only — never "black person", "brown fist", etc.
+  if (isHumanSubjectLabel(label) || isHumanSubjectLabel(det.displayName || "")) {
+    return {
+      ...det,
+      label,
+      displayName: label,
+      descriptors: unique([label]),
+    };
+  }
+
   const sample = await sampleBBox(jpeg, det.bbox);
   if (!sample) {
     return {

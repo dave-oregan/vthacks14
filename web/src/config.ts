@@ -10,6 +10,8 @@ export const ROOT = path.resolve(__dirname, "..");
 export const config = {
   port: Number(process.env.PORT ?? 8000),
   host: process.env.HOST ?? "0.0.0.0",
+  /** Force pairing QR / deep link to this host (e.g. hotspot IP). */
+  linkHost: (process.env.LINK_HOST ?? "").trim(),
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   elevenLabsApiKey: process.env.ELEVENLABS_API_KEY ?? "",
   elevenLabsVoiceId: process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM",

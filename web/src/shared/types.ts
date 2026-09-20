@@ -126,10 +126,75 @@ export interface EmergencyAlert {
   reason: string;
   message: string;
   location?: GeoPoint | null;
-  /** When true, fall is treated as officer-down → request backup (police mode). */
+  /** When true, fall is treated as possible responder distress (Guardian Mode). */
+  guardianDistress?: boolean;
+  /** @deprecated Use guardianDistress */
   policeBackup?: boolean;
 }
 
+export type GuardianEventCategory =
+  | "safety_resource"
+  | "hazard"
+  | "medical"
+  | "potential_threat"
+  | "vehicle"
+  | "location"
+  | "distress"
+  | "environment"
+  | "system";
+
+export type GuardianEventSeverity = "info" | "low" | "medium" | "high" | "critical";
+
+export type GuardianEventSource =
+  | "vision"
+  | "audio"
+  | "motion"
+  | "location"
+  | "multimodal"
+  | "manual";
+
+export type GuardianEventStatus = "new" | "confirmed" | "dismissed" | "resolved";
+
+/** Structured observation for Guardian Mode — never encodes person guilt/intent. */
+export interface GuardianEvent {
+  id: string;
+  timestamp: number;
+  category: GuardianEventCategory;
+  type: string;
+  title: string;
+  description: string;
+  confidence?: number;
+  severity: GuardianEventSeverity;
+  source: GuardianEventSource;
+  location?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number | null;
+    humanReadable?: string;
+  };
+  videoTimestamp?: number;
+  frameReference?: string;
+  clipReference?: string;
+  metadata?: Record<string, unknown>;
+  status: GuardianEventStatus;
+  requiresReview?: boolean;
+}
+
+export interface GuardianStatus {
+  highPriority: number;
+  informational: number;
+  groupCount: number;
+  largeGroup: boolean;
+  eventCount: number;
+  sensors: {
+    camera: boolean;
+    location: boolean;
+    motion: boolean;
+    audio: boolean;
+  };
+}
+
+/** @deprecated Compatibility alias — prefer GuardianEvent */
 export type SideAlertKind =
   | "danger_weapon"
   | "plate_capture"
@@ -137,6 +202,7 @@ export type SideAlertKind =
   | "officer_down"
   | "info";
 
+/** @deprecated Prefer GuardianEvent cards in the UI */
 export interface SideAlert {
   id: string;
   kind: SideAlertKind;
@@ -144,7 +210,6 @@ export interface SideAlert {
   title: string;
   message: string;
   timestampMs: number;
-  /** Auto-dismiss after this many ms; null = sticky until dismissed. */
   ttlMs: number | null;
   thumbBase64?: string | null;
   label?: string;
@@ -176,9 +241,15 @@ export interface DashboardState {
     latencyMs: number | null;
     detail?: string;
   };
+  guardianMode: boolean;
+  /** @deprecated Alias of guardianMode for older clients */
   policeMode: boolean;
   cocoFallback: boolean;
+  guardianEvents: GuardianEvent[];
+  guardianStatus: GuardianStatus;
+  /** @deprecated Prefer guardianEvents */
   sideAlerts: SideAlert[];
+  /** @deprecated Prefer guardianStatus — no danger/hostility meters */
   policeStatus: {
     dangerLevel: number;
     dangerLabel: string;

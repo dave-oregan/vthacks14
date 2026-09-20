@@ -50,7 +50,7 @@ export class VisionService extends EventEmitter {
     private relay: RelayHub,
     private store: MemoryStore,
     private onSyncMissions: (detections: Detection[], location: GeoPoint | null, sessionId: string) => Promise<void>,
-    private isPoliceMode: () => boolean = () => false,
+    private isGuardianMode: () => boolean = () => false,
     allowCocoFallback: () => boolean = () => config.cocoFallback,
   ) {
     super();
@@ -91,7 +91,7 @@ export class VisionService extends EventEmitter {
     const useServerVision =
       config.visionMode === "server" ||
       config.visionMode === "both" ||
-      this.isPoliceMode() ||
+      this.isGuardianMode() ||
       hasLocateAnything();
 
     if (!useServerVision) return;
@@ -142,7 +142,7 @@ export class VisionService extends EventEmitter {
         this.lastLocateAnythingAt = Date.now();
         const laStart = Date.now();
         const la = await detectWithLocateAnything(frame.jpeg, {
-          categories: getDetectCategories(this.isPoliceMode()),
+          categories: getDetectCategories(this.isGuardianMode()),
         });
         laMs = Date.now() - laStart;
         if (la.length > 0) {

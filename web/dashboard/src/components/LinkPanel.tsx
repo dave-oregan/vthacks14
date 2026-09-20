@@ -9,11 +9,13 @@ type LinkInfo = {
   relayUrls: string[];
   instructions: string[];
   port: number;
+  cgnatWarning?: boolean;
+  linkHostOverride?: string | null;
 };
 
 export function LinkPanel({ linked }: { linked: boolean }) {
   const [info, setInfo] = useState<LinkInfo | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -27,25 +29,25 @@ export function LinkPanel({ linked }: { linked: boolean }) {
       }
     }
     load();
-    const id = setInterval(load, 8000);
+    const id = setInterval(load, 5000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
   }, []);
 
-  async function copy(text: string) {
+  async function copy(text: string, label: string) {
     try {
       await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setCopied(label);
+      setTimeout(() => setCopied(null), 1500);
     } catch {
       /* ignore */
     }
   }
 
   return (
-    <details className="panel" open>
+    <details className="panel" open={!linked}>
       <summary className="panel-title">Link iPhone · one step</summary>
       <div className="stack">
         <div className="row">
@@ -57,9 +59,20 @@ export function LinkPanel({ linked }: { linked: boolean }) {
 
         {!linked && (
           <>
+            {info?.cgnatWarning && (
+              <div className="det-item" style={{ borderColor: "var(--warn)", color: "var(--ink-soft)" }}>
+                <strong style={{ color: "var(--warn)" }}>Network tip</strong>
+                <div style={{ marginTop: 6, fontSize: "0.8rem", lineHeight: 1.45 }}>
+                  Mac IP is <code>{info.preferredHost}</code> (100.64 CGNAT). Venue Wi‑Fi often
+                  blocks phone↔laptop. Use <strong>iPhone Personal Hotspot</strong>: join from Mac,
+                  restart the server, rescan QR.
+                </div>
+              </div>
+            )}
+
             <p style={{ margin: 0, color: "var(--muted)", fontSize: "0.85rem" }}>
-              Same Wi‑Fi. On the phone open <strong>SIGHTLINE Link</strong>, or scan this QR to
-              auto-fill the Mac address and start the relay.
+              Same network as this Mac. Open <strong>SIGHTLINE Link</strong> and scan the QR to
+              auto-fill the address and start the relay.
             </p>
 
             {info?.qrDataUrl && (
@@ -83,8 +96,19 @@ export function LinkPanel({ linked }: { linked: boolean }) {
                     </span>
                   </div>
                   {info.preferredDeepLink && (
-                    <button className="btn" onClick={() => copy(info.preferredDeepLink!)}>
-                      {copied ? "Copied" : "Copy deep link"}
+                    <button
+                      className="btn"
+                      onClick={() => copy(info.preferredDeepLink!, "link")}
+                    >
+                      {copied === "link" ? "Copied" : "Copy deep link"}
+                    </button>
+                  )}
+                  {info.preferredHost && (
+                    <button
+                      className="btn"
+                      onClick={() => copy(info.preferredHost!, "ip")}
+                    >
+                      {copied === "ip" ? "Copied" : "Copy IP"}
                     </button>
                   )}
                 </div>
@@ -96,9 +120,16 @@ export function LinkPanel({ linked }: { linked: boolean }) {
             )}
 
             <ol style={{ margin: 0, paddingLeft: 18, color: "var(--muted)", fontSize: "0.8rem" }}>
-              <li>Leave this page open</li>
-              <li>Scan QR with Camera → Open in SIGHTLINE Link</li>
-              <li>Or tap <em>Find Mission Control</em> on the phone</li>
+              {(info?.instructions?.length
+                ? info.instructions
+                : [
+                    "Leave this page open",
+                    "Scan QR with Camera → Open in SIGHTLINE Link",
+                    "Or tap Find Mission Control on the phone",
+                  ]
+              ).map((step) => (
+                <li key={step}>{step}</li>
+              ))}
             </ol>
           </>
         )}

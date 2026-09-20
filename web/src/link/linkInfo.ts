@@ -1,6 +1,6 @@
 import QRCode from "qrcode";
 import { config } from "../config.js";
-import { listLanIPv4, preferredLanIP } from "./lanAddresses.js";
+import { isCgnatAddress, listLanIPv4, preferredLanIP } from "./lanAddresses.js";
 
 export interface LinkInfo {
   service: string;
@@ -14,6 +14,8 @@ export interface LinkInfo {
   preferredDeepLink: string | null;
   qrDataUrl: string | null;
   instructions: string[];
+  cgnatWarning: boolean;
+  linkHostOverride: string | null;
 }
 
 export async function buildLinkInfo(): Promise<LinkInfo> {
@@ -21,6 +23,7 @@ export async function buildLinkInfo(): Promise<LinkInfo> {
   const preferredHost = preferredLanIP();
   const port = config.port;
   const relayPath = "/ws/relay";
+  const cgnatWarning = isCgnatAddress(preferredHost);
 
   const relayUrls = hosts.map((h) => `ws://${h}:${port}${relayPath}`);
   const deepLinks = hosts.map(
@@ -43,6 +46,21 @@ export async function buildLinkInfo(): Promise<LinkInfo> {
     });
   }
 
+  const instructions = [
+    "On iPhone: open SIGHTLINE Link → scan this QR (or Find Mission Control).",
+    "Phone and Mac must be on the same network.",
+    "Then START SIGHTLINE RELAY (QR with autoStart does this).",
+  ];
+  if (cgnatWarning) {
+    instructions.unshift(
+      "This Mac’s Wi‑Fi IP is 100.64.x (CGNAT). Many venue networks isolate phones from laptops — Bonjour/QR will fail.",
+      "Fix: turn on Personal Hotspot on the iPhone, join it from the Mac, restart npm run dev, then scan the new QR.",
+    );
+  }
+  if (config.linkHost) {
+    instructions.unshift(`Using LINK_HOST override: ${config.linkHost}`);
+  }
+
   return {
     service: "_sightline._tcp",
     port,
@@ -54,10 +72,8 @@ export async function buildLinkInfo(): Promise<LinkInfo> {
     preferredRelayUrl,
     preferredDeepLink,
     qrDataUrl,
-    instructions: [
-      "On iPhone: open SIGHTLINE Link → tap Find Mission Control (or scan this QR).",
-      "Same Wi‑Fi as this Mac is required.",
-      "Then tap START SIGHTLINE RELAY (QR with autoStart does this for you).",
-    ],
+    instructions,
+    cgnatWarning,
+    linkHostOverride: config.linkHost || null,
   };
 }

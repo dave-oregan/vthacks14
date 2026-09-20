@@ -579,34 +579,28 @@ details:not([open]) > .panel-title {
   background: linear-gradient(180deg, rgba(26, 32, 44, 0.35), rgba(26, 32, 44, 0.55));
 }
 
-.police-bar {
+.guardian-bar {
   display: grid;
-  grid-template-columns: 1.4fr 1fr;
-  gap: 18px;
+  gap: 12px;
   padding: 16px 18px;
   flex-shrink: 0;
   border-top: 1px solid var(--line);
-  background:
-    linear-gradient(135deg, rgba(255, 248, 248, 0.7), rgba(255, 255, 255, 0.55));
+  background: linear-gradient(135deg, rgba(240, 248, 255, 0.75), rgba(255, 255, 255, 0.55));
   border-bottom-left-radius: calc(var(--radius) - 1px);
   border-bottom-right-radius: calc(var(--radius) - 1px);
 }
-:root[data-theme="dark"] .police-bar {
-  background: linear-gradient(135deg, rgba(30, 20, 20, 0.7), rgba(26, 32, 44, 0.55));
+:root[data-theme="dark"] .guardian-bar {
+  background: linear-gradient(135deg, rgba(20, 28, 40, 0.75), rgba(26, 32, 44, 0.55));
 }
 
-@media (max-width: 720px) {
-  .police-bar { grid-template-columns: 1fr; }
-}
-
-.danger-meter-head {
+.guardian-status-head {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  margin-bottom: 10px;
+  flex-wrap: wrap;
 }
-.danger-meter-label {
+.guardian-status-label {
   font-family: var(--font-mono);
   font-size: 0.58rem;
   font-weight: 650;
@@ -614,98 +608,53 @@ details:not([open]) > .panel-title {
   text-transform: uppercase;
   color: var(--muted);
 }
-.danger-meter-value {
-  font-family: var(--font-display);
-  font-size: 1.2rem;
-  font-weight: 750;
-  letter-spacing: -0.03em;
-}
-.danger-meter-value--clear { color: var(--ok); }
-.danger-meter-value--monitor { color: var(--ink-soft); }
-.danger-meter-value--caution { color: var(--warn); }
-.danger-meter-value--elevated { color: var(--danger); }
-.danger-meter-value--critical,
-.danger-meter-value--officer { color: var(--live); }
-
-.danger-meter-track {
-  position: relative;
-  height: 8px;
-  border-radius: 2px;
-  background: rgba(12, 16, 23, 0.07);
-  overflow: hidden;
-}
-.danger-meter-fill {
-  height: 100%;
-  border-radius: 2px;
-  background: linear-gradient(90deg, #0f766e 0%, #ea580c 52%, #e11d48 100%);
-  transition: width 0.45s var(--ease);
-}
-.danger-meter-mark {
-  position: absolute;
-  top: -2px;
-  bottom: -2px;
-  width: 2px;
-  margin-left: -1px;
-  background: var(--ink);
-  opacity: 0.55;
-}
-
-.danger-meter-meta {
+.guardian-sensors {
   display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 10px;
-  font-size: 0.72rem;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 8px;
+  font-size: 0.75rem;
   color: var(--muted);
-  line-height: 1.4;
 }
-.danger-meter-armed {
+.guardian-sensors .on {
+  color: var(--ok);
+  font-weight: 600;
+}
+.guardian-demo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.guardian-demo-label {
   font-family: var(--font-mono);
   font-size: 0.58rem;
-  font-weight: 700;
+  font-weight: 650;
   letter-spacing: 0.1em;
-  color: var(--live);
-  white-space: nowrap;
-  animation: armed-flash 1.4s ease-in-out infinite;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-right: 4px;
 }
-
-@keyframes armed-flash {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
-}
-
-.backup-threshold {
+.guardian-event-meta {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  justify-content: center;
-  padding-left: 4px;
-  border-left: 1px solid var(--line);
-  padding-left: 18px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 0.7rem;
+  color: var(--muted);
 }
-@media (max-width: 720px) {
-  .backup-threshold {
-    border-left: none;
-    border-top: 1px solid var(--line);
-    padding-left: 0;
-    padding-top: 12px;
-  }
+.guardian-event-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
 }
-.backup-threshold-label {
-  font-size: 0.8rem;
-  color: var(--ink-soft);
-  line-height: 1.35;
+.sim-tag {
+  font-weight: 700;
+  color: var(--warn);
 }
-.backup-threshold-label strong {
-  font-family: var(--font-mono);
-  color: var(--ink);
-  font-size: 0.95rem;
-}
-.backup-threshold input[type="range"] {
-  width: 100%;
-  accent-color: var(--danger);
-  cursor: pointer;
-  height: 4px;
+.pill--guardian {
+  font-weight: 650;
 }
 
 input[type="text"] {
@@ -914,15 +863,18 @@ input[type="text"]::placeholder {
   line-height: 1.45;
 }
 
-/* —— Police mode —— */
+/* —— Guardian mode —— */
+.app--guardian .header,
 .app--police .header {
-  border-bottom-color: rgba(190, 18, 60, 0.22);
+  border-bottom-color: rgba(15, 118, 110, 0.28);
 }
+.app--guardian .brand-mark::before,
 .app--police .brand-mark::before {
-  background: var(--live);
+  background: var(--ok);
 }
+.app--guardian .brand span,
 .app--police .brand span {
-  color: #9f1239;
+  color: var(--ink-soft);
 }
 
 .side-alerts {

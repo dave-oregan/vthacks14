@@ -102,9 +102,15 @@ export function createApiRouter(app: SightlineApp) {
     res.json({ ok: true });
   });
 
+  router.post("/mode/guardian", (req, res) => {
+    const enabled = Boolean(req.body?.enabled);
+    res.json(app.setGuardianMode(enabled));
+  });
+
+  /** @deprecated Prefer /mode/guardian */
   router.post("/mode/police", (req, res) => {
     const enabled = Boolean(req.body?.enabled);
-    res.json(app.setPoliceMode(enabled));
+    res.json(app.setGuardianMode(enabled));
   });
 
   router.post("/mode/coco-fallback", (req, res) => {
@@ -112,15 +118,42 @@ export function createApiRouter(app: SightlineApp) {
     res.json(app.setCocoFallback(enabled));
   });
 
-  router.post("/mode/backup-threshold", (req, res) => {
-    const raw = Number(req.body?.threshold ?? req.body?.backupThreshold ?? 0.55);
-    const threshold = Number.isFinite(raw) ? raw : 0.55;
-    res.json(app.setBackupThreshold(threshold > 1 ? threshold / 100 : threshold));
+  router.post("/guardian/events/dismiss", (req, res) => {
+    const id = String(req.body?.id ?? "");
+    if (id) app.dismissGuardianEvent(id);
+    res.json({ ok: true });
   });
 
+  router.post("/guardian/events/confirm", (req, res) => {
+    const id = String(req.body?.id ?? "");
+    if (id) app.confirmGuardianEvent(id);
+    res.json({ ok: true });
+  });
+
+  router.post("/guardian/query", (req, res) => {
+    const query = String(req.body?.query ?? "");
+    res.json(app.queryGuardianMemory(query));
+  });
+
+  router.post("/guardian/demo/:scenario", (req, res) => {
+    try {
+      if (!app.getDashboardState().guardianMode) {
+        app.setGuardianMode(true);
+      }
+      const event = app.injectGuardianDemo(String(req.params.scenario));
+      res.json({ ok: true, event, guardianEvents: app.getDashboardState().guardianEvents });
+    } catch (err) {
+      res.status(400).json({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  /** @deprecated Prefer /guardian/events/dismiss */
   router.post("/alerts/dismiss", (req, res) => {
     const id = String(req.body?.id ?? "");
-    if (id) app.dismissSideAlert(id);
+    if (id) app.dismissGuardianEvent(id);
     res.json({ ok: true });
   });
 

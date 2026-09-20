@@ -6,6 +6,7 @@ import sharp from "sharp";
 import { generateWithFallback, hasGemini } from "./client.js";
 import type { Detection } from "../shared/types.js";
 import { normalizeLabel } from "../memory/store.js";
+import { isHumanSubjectLabel } from "../vision/appearance.js";
 
 const ALLOWED_COLORS = new Set([
   "black",
@@ -58,6 +59,7 @@ export async function enrichDetectionsWithGemini(
 
     const prompt = `You label appearance of ALREADY DETECTED objects. Do not invent objects.
 Keep each coco label. Only add color + optional material from what is VISIBLE in that bbox.
+NEVER assign color or material to people, fists, hands, faces, or other body parts.
 
 Allowed colors: ${[...ALLOWED_COLORS].join(", ")}
 Allowed materials: ${[...ALLOWED_MATERIALS].join(", ")}
@@ -74,7 +76,8 @@ ${JSON.stringify(
 
 Return JSON only:
 { "items": [ { "bboxIndex": 0, "color": "black", "material": "plastic" } ] }
-One item per bboxIndex. If unsure, omit material. NEVER invent brands.`;
+One item per bboxIndex. If unsure, omit material. NEVER invent brands.
+Omit color/material entirely for person/people/fist/hand/face.`;
 
     const text = await generateWithFallback(
       [
@@ -97,6 +100,9 @@ One item per bboxIndex. If unsure, omit material. NEVER invent brands.`;
       const enrich = byIndex.get(i);
       if (!enrich) return det;
       const label = normalizeLabel(det.label);
+      if (isHumanSubjectLabel(label)) {
+        return { ...det, label, displayName: label, descriptors: unique([label]) };
+      }
       const color = sanitize(enrich.color, ALLOWED_COLORS);
       const material = sanitize(enrich.material, ALLOWED_MATERIALS);
       const descriptors = unique(

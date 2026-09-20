@@ -8,7 +8,7 @@ import { Timeline } from "./components/Timeline";
 import { LinkPanel } from "./components/LinkPanel";
 import { RecallPicker } from "./components/RecallPicker";
 import { EmergencyModal } from "./components/EmergencyModal";
-import { SideAlertStack } from "./components/SideAlertStack";
+import { GuardianEventStack } from "./components/GuardianEventStack";
 
 export function App() {
   const {
@@ -21,29 +21,32 @@ export function App() {
     simulateFall,
     dismissEmergency,
     resetDemo,
-    setPoliceMode,
-    setBackupThreshold,
-    dismissSideAlert,
+    setGuardianMode,
+    dismissGuardianEvent,
+    confirmGuardianEvent,
+    queryGuardianMemory,
+    injectGuardianDemo,
   } = useSightline();
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [theme, setTheme] = useState<"light" | "dark">("light");
 
   useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.setAttribute('data-theme', 'dark');
+    if (theme === "dark") {
+      document.documentElement.setAttribute("data-theme", "dark");
     } else {
-      document.documentElement.removeAttribute('data-theme');
+      document.documentElement.removeAttribute("data-theme");
     }
   }, [theme]);
 
   const [query, setQuery] = useState("Where is my black laptop?");
+  const [guardianQuery, setGuardianQuery] = useState("Where was the last AED?");
   const [busy, setBusy] = useState<string | null>(null);
   const [recallNote, setRecallNote] = useState<string | null>(null);
+  const [guardianNote, setGuardianNote] = useState<string | null>(null);
   const [picker, setPicker] = useState<{ query: string; matches: RecallMatch[] } | null>(null);
 
-  const policeMode = Boolean(state?.policeMode);
-  const police = state?.policeStatus;
+  const guardianMode = Boolean(state?.guardianMode ?? state?.policeMode);
+  const gStatus = state?.guardianStatus;
 
-  // Browser COCO: always for snappy POV; in police mode still report people for crowd meter.
   const { detections: browserDets, ready: visionReady, status: visionStatus } = useBrowserVision(
     state?.latestFrameJpegBase64 ?? null,
     { enabled: true, report: true },
@@ -52,7 +55,7 @@ export function App() {
   const overlayDetections = useMemo(() => {
     const server = state?.latestDetections ?? [];
 
-    if (!policeMode) {
+    if (!guardianMode) {
       if (!visionReady) return server;
       return browserDets.map((d) => {
         const match = server.find(
@@ -67,13 +70,15 @@ export function App() {
       });
     }
 
-    // Police POV: live browser people + server threats only (no clutter / no stuck boxes).
+    // Guardian POV: people + safety-relevant classes (observations, not judgments).
     const fromBrowser = browserDets.filter((d) =>
       /\b(person|people|crowd)\b/i.test(`${d.label} ${d.displayName ?? ""}`),
     );
-    const threatRe =
-      /\b(gun|handgun|pistol|rifle|firearm|weapon|knife|blade|machete|fist|fight|punch|hostile|license\s*plate|number\s*plate|plate)\b/i;
-    const fromServer = server.filter((d) => threatRe.test(`${d.label} ${d.displayName ?? ""}`));
+    const observeRe =
+      /\b(gun|handgun|pistol|rifle|firearm|weapon|knife|blade|machete|fist|fight|punch|license\s*plate|number\s*plate|plate|aed|extinguisher|smoke|fire|exit|stairwell|elevator)\b/i;
+    const fromServer = server.filter((d) =>
+      observeRe.test(`${d.label} ${d.displayName ?? ""}`),
+    );
     const merged = [...fromBrowser];
     for (const s of fromServer) {
       const dup = merged.some(
@@ -85,7 +90,7 @@ export function App() {
       if (!dup) merged.push(s);
     }
     return merged;
-  }, [browserDets, state?.latestDetections, visionReady, policeMode]);
+  }, [browserDets, state?.latestDetections, visionReady, guardianMode]);
 
   const linkStatus = useMemo(() => {
     if (!state?.session?.connected) return { label: "LINK DOWN", tone: "warn" as const };
@@ -133,6 +138,11 @@ export function App() {
     setPicker(null);
   }
 
+  async function doGuardianQuery() {
+    const result = await queryGuardianMemory(guardianQuery);
+    setGuardianNote(result.text);
+  }
+
   async function onPickMatch(m: RecallMatch) {
     await selectRecall(m.id);
     if (m.mapsUrl) {
@@ -147,20 +157,18 @@ export function App() {
   }
 
   const showBlockingEmergency = Boolean(state?.emergencyAlert?.active);
-
-  const danger = police?.dangerLevel ?? 0;
-  const backupPct = Math.round((police?.backupThreshold ?? 0.55) * 100);
+  const sensors = gStatus?.sensors;
 
   return (
-    <div className={`app ${policeMode ? "app--police" : ""}`}>
+    <div className={`app ${guardianMode ? "app--guardian" : ""}`}>
       <header className="header">
         <div className="brand">
           <div className="brand-mark">
             <h1>SIGHTLINE</h1>
           </div>
           <span>
-            {policeMode
-              ? "Officer safety suite — threats, crowds, hostility & backup"
+            {guardianMode
+              ? "Guardian Mode — observations for first responders · humans decide"
               : "Mission Control — link the phone, recall what the world forgot"}
           </span>
         </div>
@@ -170,6 +178,12 @@ export function App() {
               <span className={`dot ${state?.live ? "live" : ""}`} />
               {state?.live ? "LIVE" : "IDLE"}
             </div>
+            {guardianMode && (
+              <div className="pill pill--guardian">
+                <span className="dot ok" />
+                GUARDIAN ACTIVE
+              </div>
+            )}
             <div className="pill">
               <span className={`dot ${linkStatus.tone}`} />
               {linkStatus.label}
@@ -185,30 +199,30 @@ export function App() {
           <div className="action-rail">
             <button
               className="btn"
-              onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+              onClick={() => setTheme(theme === "light" ? "dark" : "light")}
               title="Toggle Dark Mode"
             >
-              {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+              {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
             </button>
             <button
-              className={`btn ${policeMode ? "primary" : ""}`}
-              onClick={() => run("police", () => setPoliceMode(!policeMode))}
+              className={`btn ${guardianMode ? "primary" : ""}`}
+              onClick={() => run("guardian", () => setGuardianMode(!guardianMode))}
               disabled={!!busy}
-              title="Toggle police safety suite"
+              title="Toggle Guardian Mode"
             >
-              {policeMode ? "Police ON" : "Police"}
+              {guardianMode ? "Guardian ON" : "Guardian"}
             </button>
             <button
               className="btn danger"
               onClick={() => run("fall", simulateFall)}
               disabled={!!busy}
               title={
-                policeMode
-                  ? "Demo: officer down → request backup"
+                guardianMode
+                  ? "Demo: possible responder distress signal"
                   : "Demo only — does not call 911"
               }
             >
-              {policeMode ? "Simulate Down" : "Simulate Fall"}
+              {guardianMode ? "Simulate Distress" : "Simulate Fall"}
             </button>
             <button className="btn" onClick={() => run("reset", resetDemo)} disabled={!!busy}>
               Reset
@@ -220,7 +234,7 @@ export function App() {
       <div className="main">
         <section className="panel pov-panel">
           <div className="panel-title">
-            {policeMode ? "Field POV · officer safety" : "Field POV · live detections"}
+            {guardianMode ? "Field POV · Guardian observations" : "Field POV · live detections"}
           </div>
           <LivePOV
             jpegBase64={state?.latestFrameJpegBase64 ?? null}
@@ -229,62 +243,83 @@ export function App() {
             visionStatus={visionStatus}
           />
 
-          {policeMode ? (
-            <div className="police-bar">
-              <div className="danger-meter">
-                <div className="danger-meter-head">
-                  <span className="danger-meter-label">Danger</span>
-                  <strong className={`danger-meter-value danger-meter-value--${(police?.dangerLabel ?? "Clear").toLowerCase()}`}>
-                    {police?.dangerLabel ?? "Clear"} · {danger}
+          {guardianMode ? (
+            <div className="guardian-bar">
+              <div className="guardian-status">
+                <div className="guardian-status-head">
+                  <span className="guardian-status-label">Active observations</span>
+                  <strong>
+                    {(gStatus?.highPriority ?? 0) > 0
+                      ? `${gStatus?.highPriority} high priority`
+                      : "Clear"}
+                    {" · "}
+                    {gStatus?.informational ?? 0} informational
                   </strong>
                 </div>
-                <div className="danger-meter-track" aria-hidden>
-                  <div
-                    className="danger-meter-fill"
-                    style={{ width: `${danger}%` }}
-                  />
-                  <div
-                    className="danger-meter-mark"
-                    style={{ left: `${backupPct}%` }}
-                    title={`Backup threshold ${backupPct}%`}
-                  />
-                </div>
-                <div className="danger-meter-meta">
+                <div className="guardian-sensors">
+                  <span className={sensors?.camera ? "on" : ""}>● Camera</span>
+                  <span className={sensors?.location ? "on" : ""}>● Location</span>
+                  <span className={sensors?.motion ? "on" : ""}>● Motion</span>
+                  <span className={sensors?.audio ? "on" : ""}>● Audio</span>
                   <span>
-                    {police?.topThreat
-                      ? `${police.topThreat} · ${Math.round((police.topConfidence ?? 0) * 100)}%`
-                      : "No weapons in last scan"}
-                    {" · "}
-                    {police?.groupCount ?? 0} people
-                    {police?.largeGroup ? " (large group)" : ""}
-                    {" · "}
-                    Hostility {police?.hostilityLabel ?? "Calm"}
-                    {typeof police?.hostility === "number" ? ` ${police.hostility}` : ""}
-                    {" · "}
-                    Ticks {police?.dangerTicks ?? 0}/2
+                    {gStatus?.groupCount ?? 0} people
+                    {gStatus?.largeGroup ? " (crowd)" : ""}
                   </span>
-                  {(police?.backupArmed || (police?.dangerTicks ?? 0) >= 2) && (
-                    <span className="danger-meter-armed">BACKUP ARMED</span>
-                  )}
                 </div>
               </div>
-              <label className="backup-threshold">
-                <span className="backup-threshold-label">
-                  Call backup at ≥ <strong>{backupPct}%</strong> confidence
-                </span>
+              <div className="guardian-demo-actions">
+                <span className="guardian-demo-label">Demo inject</span>
+                {(
+                  [
+                    ["plate", "Plate"],
+                    ["aed", "AED"],
+                    ["extinguisher", "Extinguisher"],
+                    ["firearm", "Firearm*"],
+                    ["distress", "Distress"],
+                    ["address", "Address"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className="btn"
+                    disabled={!!busy}
+                    title={id === "firearm" ? "Uses simulated training imagery — no real weapons" : undefined}
+                    onClick={() => run(`demo-${id}`, () => injectGuardianDemo(id))}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="actions">
                 <input
-                  type="range"
-                  min={20}
-                  max={95}
-                  step={5}
-                  value={backupPct}
-                  onChange={(e) => {
-                    const next = Number(e.target.value) / 100;
-                    void setBackupThreshold(next);
+                  type="text"
+                  value={guardianQuery}
+                  onChange={(e) => setGuardianQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void run("gquery", doGuardianQuery);
                   }}
-                  aria-label="Backup confidence threshold"
+                  placeholder="Where was the last AED?"
+                  aria-label="Guardian memory query"
                 />
-              </label>
+                <button
+                  className="btn primary"
+                  onClick={() => run("gquery", doGuardianQuery)}
+                  disabled={!!busy}
+                >
+                  Ask memory
+                </button>
+              </div>
+              {guardianNote && (
+                <div className="stack" style={{ paddingTop: 4, borderTop: "1px solid var(--line)" }}>
+                  <div className="row">
+                    <span className="k">Guardian memory</span>
+                    <span className="v" style={{ textAlign: "left", whiteSpace: "pre-wrap" }}>
+                      {guardianNote}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <>
@@ -324,13 +359,40 @@ export function App() {
         <aside className="side">
           <LinkPanel linked={Boolean(state?.session?.connected)} />
 
+          {guardianMode && (
+            <details className="panel" open>
+              <summary className="panel-title">Live memory</summary>
+              <div className="scroll">
+                {(state?.guardianEvents ?? []).length === 0 && (
+                  <div className="det-item">No Guardian observations yet — use Demo inject or live vision.</div>
+                )}
+                {(state?.guardianEvents ?? []).map((e) => (
+                  <div className="det-item" key={e.id}>
+                    <div className="row">
+                      <span className="k">{new Date(e.timestamp).toLocaleTimeString()}</span>
+                      <span className="v">{e.severity}</span>
+                    </div>
+                    <div className="row">
+                      <span className="k">{e.title}</span>
+                      <span className="v">
+                        {typeof e.confidence === "number"
+                          ? `${Math.round(e.confidence * 100)}%`
+                          : e.category}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
           <details className="panel" open>
             <summary className="panel-title">Vision</summary>
             <div className="scroll">
               {overlayDetections.length === 0 && (
                 <div className="det-item">
-                  {policeMode
-                    ? "Weapons, people & hostility only — clutter ignored"
+                  {guardianMode
+                    ? "Safety-relevant observations only — clutter ignored"
                     : "Waiting for objects — phone, laptop, backpack…"}
                 </div>
               )}
@@ -395,9 +457,10 @@ export function App() {
 
       <Timeline events={state?.events ?? []} />
 
-      <SideAlertStack
-        alerts={state?.sideAlerts ?? []}
-        onDismiss={(id) => void dismissSideAlert(id)}
+      <GuardianEventStack
+        events={state?.guardianEvents ?? []}
+        onDismiss={(id) => void dismissGuardianEvent(id)}
+        onConfirm={(id) => void confirmGuardianEvent(id)}
       />
 
       {picker && (

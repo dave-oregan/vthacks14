@@ -11,7 +11,7 @@ export class EmergencyService extends EventEmitter {
   private fallDetector = new FallDetector();
   public emergencyAlert: EmergencyAlert | null = null;
   public lastKnownLocation: GeoPoint | null = null;
-  private isPoliceMode: () => boolean = () => false;
+  private isGuardianMode: () => boolean = () => false;
 
   constructor(
     private relay: RelayHub,
@@ -20,8 +20,13 @@ export class EmergencyService extends EventEmitter {
     super();
   }
 
+  setGuardianModeGetter(fn: () => boolean): void {
+    this.isGuardianMode = fn;
+  }
+
+  /** @deprecated Use setGuardianModeGetter */
   setPoliceModeGetter(fn: () => boolean): void {
-    this.isPoliceMode = fn;
+    this.setGuardianModeGetter(fn);
   }
 
   reset() {
@@ -51,7 +56,7 @@ export class EmergencyService extends EventEmitter {
           message: this.emergencyMessage(
             this.emergencyAlert.peakImpactG,
             this.lastKnownLocation,
-            Boolean(this.emergencyAlert.policeBackup),
+            Boolean(this.emergencyAlert.guardianDistress ?? this.emergencyAlert.policeBackup),
           ),
         };
         this.emit("emergency", this.emergencyAlert);
@@ -74,7 +79,7 @@ export class EmergencyService extends EventEmitter {
 
   private triggerEmergency(fall: FallEvent): EmergencyAlert {
     const loc = this.resolvePhoneLocation();
-    const policeBackup = this.isPoliceMode();
+    const guardianDistress = this.isGuardianMode();
     const alert: EmergencyAlert = {
       active: true,
       demo: true,
@@ -82,9 +87,10 @@ export class EmergencyService extends EventEmitter {
       peakImpactG: fall.peakImpactG,
       freefallMs: fall.freefallMs,
       reason: fall.reason,
-      message: this.emergencyMessage(fall.peakImpactG, loc, policeBackup),
+      message: this.emergencyMessage(fall.peakImpactG, loc, guardianDistress),
       location: loc,
-      policeBackup,
+      guardianDistress,
+      policeBackup: guardianDistress,
     };
 
     this.emergencyAlert = alert;
@@ -99,13 +105,20 @@ export class EmergencyService extends EventEmitter {
     });
 
     console.warn(
-      `[emergency:demo] ${policeBackup ? "police-backup" : "911"} ${fall.reason} peak=${fall.peakImpactG}g loc=${
+      `[emergency:demo] ${guardianDistress ? "guardian-distress" : "911"} ${fall.reason} peak=${fall.peakImpactG}g loc=${
         loc ? `${loc.latitude.toFixed(5)},${loc.longitude.toFixed(5)}` : "none"
       }`,
     );
 
     this.emit("emergency", alert);
-    if (policeBackup) {
+    if (guardianDistress) {
+      this.emit("guardian_responder_distress", {
+        peakImpactG: fall.peakImpactG,
+        location: loc,
+        sessionId: fall.sessionId,
+        alert,
+      });
+      // Compat alias for any leftover listeners
       this.emit("police_officer_down", {
         peakImpactG: fall.peakImpactG,
         location: loc,
@@ -114,21 +127,20 @@ export class EmergencyService extends EventEmitter {
       });
     }
 
-    // Connect to the Guardian API (Twilio and GoDaddy ANS)
-    // Map peakImpactG to 0-100 score. 4.0g is our threshold for a hard impact.
-    // 4.0g -> 80 score.
-    const impactScore = Math.min(100, Math.max(0, (fall.peakImpactG / 5.0) * 100)); 
+    const impactScore = Math.min(100, Math.max(0, (fall.peakImpactG / 5.0) * 100));
     void evaluateRisk(
       { timestampMs: fall.triggeredAtMs, impactScore },
       undefined,
-      `ans://v1.0.0.guardian.${config.ansTeamDomain}`
-    ).catch(err => console.error("[EmergencyService] Failed to evaluate risk with Guardian API:", err));
+      `ans://v1.0.0.guardian.${config.ansTeamDomain}`,
+    ).catch((err) =>
+      console.error("[EmergencyService] Failed to evaluate risk with Guardian API:", err),
+    );
 
     void speak(
-      policeBackup
+      guardianDistress
         ? loc
-          ? `SIGHTLINE police demo. Officer down near ${loc.latitude.toFixed(3)}, ${loc.longitude.toFixed(3)}. Requesting backup. This is a demonstration only.`
-          : "SIGHTLINE police demo. Officer down. Requesting backup. This is a demonstration only."
+          ? `SIGHTLINE guardian demo. Possible responder distress near ${loc.latitude.toFixed(3)}, ${loc.longitude.toFixed(3)}. This is a demonstration only.`
+          : "SIGHTLINE guardian demo. Possible responder distress. This is a demonstration only."
         : loc
           ? `SIGHTLINE demo alert. Possible fall detected near ${loc.latitude.toFixed(3)}, ${loc.longitude.toFixed(3)}. Contacting nine one one. This is a demonstration only.`
           : "SIGHTLINE demo alert. Possible fall detected. Contacting nine one one. This is a demonstration only.",
@@ -154,12 +166,12 @@ export class EmergencyService extends EventEmitter {
     return withGeo[0]?.lastLocation ?? null;
   }
 
-  private emergencyMessage(peakG: number, loc: GeoPoint | null, policeBackup: boolean): string {
-    if (policeBackup) {
+  private emergencyMessage(peakG: number, loc: GeoPoint | null, guardianDistress: boolean): string {
+    if (guardianDistress) {
       if (loc) {
-        return `Officer down / impact ${peakG}g. DEMO: would request backup at ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}. No real dispatch.`;
+        return `Possible responder distress / impact ${peakG}g. DEMO: would escalate with location ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}. No real dispatch.`;
       }
-      return `Officer down / impact ${peakG}g. DEMO: would request backup — waiting for phone GPS. No real dispatch.`;
+      return `Possible responder distress / impact ${peakG}g. DEMO: would escalate — waiting for phone GPS. No real dispatch.`;
     }
     if (loc) {
       const acc =
