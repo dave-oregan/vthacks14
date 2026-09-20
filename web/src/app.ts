@@ -494,7 +494,9 @@ export class SightlineApp extends EventEmitter {
       if (a.ans !== agentAnsName) return a;
       return {
         ...a,
-        state: req.decision === "allow" ? ("IDENTITY VERIFIED" as const) : ("BLOCKED" as const),
+        state: req.verificationStatus === "PENDING VALIDATION" 
+          ? ("PENDING VALIDATION" as const)
+          : req.decision === "allow" ? ("IDENTITY VERIFIED" as const) : ("BLOCKED" as const),
       };
     });
     this.broadcast();

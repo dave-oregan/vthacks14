@@ -45,25 +45,26 @@ export async function verifyAgentAccess(
   requestedScopes: string[],
   missionId?: string,
 ): Promise<AgentAccessRequest> {
-  const allowed = await verifyAnsIdentity(agentAnsName);
+  const result = await verifyAnsIdentity(agentAnsName);
   const req: AgentAccessRequest = {
     id: uuid(),
     agentAnsName,
     requestedScopes,
     missionId,
-    verificationStatus: allowed ? "verified" : "blocked",
-    decision: allowed ? "allow" : "deny",
+    verificationStatus: result.status,
+    decision: result.isFullyVerified ? "allow" : "deny",
+    checks: result.checks,
     timestampMs: Date.now(),
   };
   store.saveAgentRequest(req);
   store.addEvent({
-    type: allowed ? "agent_verified" : "agent_blocked",
+    type: result.isFullyVerified ? "agent_verified" : "agent_blocked",
     timestampMs: req.timestampMs,
     missionId,
-    severity: allowed ? "info" : "warn",
-    description: allowed
+    severity: result.isFullyVerified ? "info" : "warn",
+    description: result.isFullyVerified
       ? `ANS verified ${agentAnsName} for scopes [${requestedScopes.join(", ")}]`
-      : `ANS blocked unknown agent ${agentAnsName}`,
+      : `ANS blocked agent ${agentAnsName}: ${result.status}`,
   });
   return req;
 }

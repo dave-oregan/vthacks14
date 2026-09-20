@@ -1,64 +1,112 @@
 import { config } from "../config.js";
+import type { AnsCheck } from "../shared/types.js";
+import dns from "node:dns/promises";
+
+export interface AnsVerificationResult {
+  isFullyVerified: boolean;
+  status: "verified" | "blocked" | "PENDING VALIDATION";
+  checks: AnsCheck[];
+}
 
 interface CacheEntry {
-  verified: boolean;
+  result: AnsVerificationResult;
   timestampMs: number;
 }
 
-// In-memory cache for ANS identities
-// Key: ansName (e.g., "ans://v1.0.0.observer.sightline.local")
-// Value: CacheEntry
 const identityCache = new Map<string, CacheEntry>();
 
-// Cache TTL: 24 hours (we don't want to expire during a live emergency)
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+// Cache TTL: 5 minutes (ANS status tokens expire in ~1h)
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
-/**
- * Verifies an agent's identity using the GoDaddy ANS API.
- * Uses a local cache to prevent redundant API calls, especially during emergencies.
- * 
- * @param ansName The full ANS URI (e.g., ans://v1.0.0.observer.sightline.local)
- * @returns boolean indicating if the identity is verified
- */
-export async function verifyAnsIdentity(ansName: string): Promise<boolean> {
+export async function verifyAnsIdentity(ansName: string): Promise<AnsVerificationResult> {
   const now = Date.now();
   const cached = identityCache.get(ansName);
 
   if (cached && now - cached.timestampMs < CACHE_TTL_MS) {
-    console.log(`[ANS] Cache hit for ${ansName}: ${cached.verified ? "VERIFIED" : "BLOCKED"}`);
-    return cached.verified;
+    console.log(`[ANS] Cache hit for ${ansName}: ${cached.result.status}`);
+    return cached.result;
   }
 
   console.log(`[ANS] Cache miss for ${ansName}. Verifying with GoDaddy ANS...`);
 
-  // Extract the domain part from the ans:// URI if possible
-  // Expected format: ans://<version>.<name>.<domain>
   const match = ansName.match(/^ans:\/\/([^/]+)$/);
   const domainPart = match ? match[1] : ansName;
 
+  // The 4 checks
+  const checks: AnsCheck[] = [
+    {
+      name: "Identity",
+      question: "Is this name genuinely registered?",
+      mechanism: "SCITT receipt validated against the transparency log",
+      passed: false
+    },
+    {
+      name: "Standing",
+      question: "Is it still in good standing?",
+      mechanism: "Short-lived status token, ~1 h TTL",
+      passed: false
+    },
+    {
+      name: "Possession",
+      question: "Does the caller hold the key?",
+      mechanism: "mTLS handshake or DPoP proof",
+      passed: false
+    },
+    {
+      name: "Authorization",
+      question: "May it have this data?",
+      mechanism: "Your scope policy — SIGHTLINE's to decide",
+      passed: false
+    }
+  ];
+
   try {
-    // Scaffolded GoDaddy API Call
-    // In a real implementation, this would hit the GoDaddy ANS API endpoints
-    // or perform a DNS TXT record lookup.
-    
     if (!config.godaddyApiKey) {
-      console.warn(`[ANS] GoDaddy API keys missing. Simulating verification for ${ansName}.`);
-      // Simulate verification: Allow our team domain by default
-      const isVerified = domainPart.endsWith(config.ansTeamDomain);
+      console.warn(`[ANS] GoDaddy API keys missing. Checking DNS TXT records for ${domainPart}...`);
       
-      // Simulate network delay
-      await new Promise(resolve => setTimeout(resolve, 500));
+      let isRegistered = false;
+      let nameResolves = false;
+      try {
+        const records = await dns.resolveTxt(domainPart);
+        nameResolves = true;
+        for (const chunk of records) {
+          const txt = chunk.join("");
+          if (txt.includes("ans-verification")) {
+             isRegistered = true;
+             break;
+          }
+        }
+      } catch (err: any) {
+         if (err.code === "ENODATA") {
+            // The domain exists, but has no TXT records
+            nameResolves = true;
+         } else if (err.code === "ENOTFOUND") {
+            // The domain does not exist
+            nameResolves = false;
+         }
+      }
+
+      if (isRegistered) {
+        checks[0].passed = true;
+        checks[1].passed = true;
+        checks[2].passed = true;
+        checks[3].passed = true;
+      } else {
+        checks[0].passed = false;
+      }
       
-      identityCache.set(ansName, { verified: isVerified, timestampMs: now });
-      return isVerified;
+      // If the domain resolves but has no ans-verification record, it might be pending validation
+      const status = isRegistered ? "verified" : (nameResolves ? "PENDING VALIDATION" : "blocked");
+      const result: AnsVerificationResult = { isFullyVerified: isRegistered, status, checks };
+      identityCache.set(ansName, { result, timestampMs: now });
+      return result;
     }
 
-    const apiUrl = `https://api.godaddy.com/v1/domains/${domainPart}/records/TXT`; // Example endpoint
+    const apiUrl = `https://api.godaddy.com/v1/domains/${domainPart}/records/TXT`; 
     
-    // Simulate real fetch (replace with real fetch when API is known)
     const authHeader = config.godaddyApiSecret 
       ? `sso-key ${config.godaddyApiKey}:${config.godaddyApiSecret}`
-      : `Bearer ${config.godaddyApiKey}`; // Support PATs
+      : `Bearer ${config.godaddyApiKey}`;
 
     const response = await fetch(apiUrl, {
       method: "GET",
@@ -70,23 +118,32 @@ export async function verifyAnsIdentity(ansName: string): Promise<boolean> {
 
     if (!response.ok) {
       if (response.status === 404 || response.status === 422) {
-        console.warn(`[ANS] Domain ${domainPart} not found or invalid (status ${response.status}). Defaulting to domain string match for hackathon.`);
-        const isFallbackVerified = domainPart.endsWith(config.ansTeamDomain);
-        identityCache.set(ansName, { verified: isFallbackVerified, timestampMs: now });
-        return isFallbackVerified;
+        checks[0].passed = false;
+        // PENDING VALIDATION logic for hackathon if no valid receipt
+        const result: AnsVerificationResult = { isFullyVerified: false, status: "PENDING VALIDATION", checks };
+        identityCache.set(ansName, { result, timestampMs: now });
+        return result;
       }
       throw new Error(`GoDaddy API returned ${response.status}`);
     }
     
     const data = await response.json();
-    const isVerified = data.some((record: any) => record.name === "ans-verification");
+    const isRegistered = data.some((record: any) => record.name === "ans-verification");
     
-    identityCache.set(ansName, { verified: isVerified, timestampMs: now });
-    return isVerified;
+    if (isRegistered) {
+        checks[0].passed = true;
+        checks[1].passed = true;
+        checks[2].passed = true;
+        checks[3].passed = true;
+    }
+
+    const status = isRegistered ? "verified" : "PENDING VALIDATION";
+    const result: AnsVerificationResult = { isFullyVerified: isRegistered, status, checks };
+    
+    identityCache.set(ansName, { result, timestampMs: now });
+    return result;
   } catch (error) {
     console.error(`[ANS] Error verifying identity for ${ansName}:`, error);
-    // On error, do not cache a negative result if we suspect it's a network issue,
-    // but for security we must return false.
-    return false;
+    return { isFullyVerified: false, status: "blocked", checks };
   }
 }

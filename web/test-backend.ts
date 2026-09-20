@@ -15,12 +15,12 @@ async function runTests() {
 
   console.log("\n--- Phase 1: GoDaddy ANS ---");
   const testAns = `ans://v1.0.0.test.${config.ansTeamDomain}`;
-  const isVerified = await verifyAnsIdentity(testAns);
-  console.log(`ANS Verification Result for ${testAns}: ${isVerified}`);
+  const result1 = await verifyAnsIdentity(testAns);
+  console.log(`ANS Verification Result for ${testAns}: ${result1.status}`);
   
   // Test cache
-  const isVerifiedCached = await verifyAnsIdentity(testAns);
-  console.log(`ANS Cached Verification Result: ${isVerifiedCached}`);
+  const result2 = await verifyAnsIdentity(testAns);
+  console.log(`ANS Cached Verification Result: ${result2.status}`);
 
   console.log("\n--- Phase 2: Guardian Twilio Alert ---");
   console.log("Triggering simulated emergency...");
