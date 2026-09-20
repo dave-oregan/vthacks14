@@ -62,6 +62,7 @@ export class SightlineApp extends EventEmitter {
       },
       () => this.guardianService.isEnabled(),
       () => this.cocoFallbackEnabled,
+      () => this.emergencyService.lastKnownLocation ?? this.relay.getSession()?.lastLocation ?? null,
     );
 
     this.wireServices();
@@ -154,8 +155,17 @@ export class SightlineApp extends EventEmitter {
 
     this.relay.on("location", (geo: GeoPoint & { sessionId: string }) => {
       this.emergencyService.updateLocation(geo);
+      // GPS often arrives after the first vision pass — backfill recent cards.
+      const stamped = this.store.stampLocation(geo);
+      if (stamped > 0) {
+        console.log(
+          `[memory] stamped GPS onto ${stamped} recent object(s) ` +
+            `(${geo.latitude.toFixed(5)}, ${geo.longitude.toFixed(5)})`,
+        );
+      }
+      this.guardianService.setSensorHints({ location: true });
       void this.missionService.evaluateLeaveBehind(geo, this.visionService.getLatestDetections());
-      this.broadcast();
+      this.broadcast(true);
     });
 
     this.relay.on("motion", (sample) => {
