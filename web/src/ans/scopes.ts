@@ -8,10 +8,12 @@
 
 /** Scopes each agent role is permitted to request. */
 const POLICY: Record<string, string[]> = {
+  // Scope names must match what callers actually request — see
+  // api/routes.ts (/memory/context, /ans/verify) and app.ts.
   observer: ["memory.read"],
   memory: ["memory.read", "memory.write"],
   reasoner: ["memory.read", "vision.describe"],
-  guardian: ["telemetry.fall", "memory.read", "memory.frame", "location.coarse"],
+  guardian: ["memory.read", "camera.read", "location", "telemetry.fall"],
   action: ["notify.sms"],
 };
 
