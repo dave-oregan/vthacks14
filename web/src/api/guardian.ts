@@ -2,6 +2,8 @@ import { sendEmergencySms } from "./twilio.js";
 import { verifyAnsIdentity } from "../ans/godaddy.js";
 import { config } from "../config.js";
 
+import dns from "node:dns/promises";
+
 // Keep track of recent evaluations to prevent spamming
 let lastAlertTimestamp = 0;
 const ALERT_COOLDOWN_MS = 60 * 1000; // 1 minute cooldown
@@ -15,6 +17,23 @@ export interface MotionData {
 export interface VisionContext {
   sceneDescription: string;
   hasPeople: boolean;
+}
+
+async function discoverMemoryEndpoint(): Promise<string> {
+  const memoryDomain = `v1.0.0.memory.${config.ansTeamDomain}`;
+  try {
+    // Attempt to resolve TXT record to simulate DNS-based discovery
+    const records = await dns.resolveTxt(memoryDomain);
+    for (const chunk of records) {
+      const txt = chunk.join("");
+      if (txt.startsWith("endpoint=")) return txt.split("=")[1];
+    }
+  } catch (err) {
+    // mock dns for local testing
+    console.log(`[DNS] Simulated resolution for ${memoryDomain}`);
+    return `http://127.0.0.1:${config.port}`;
+  }
+  return `http://127.0.0.1:${config.port}`;
 }
 
 /**
@@ -31,8 +50,6 @@ export async function evaluateRisk(
     return { triggered: false, reason: "cooldown" };
   }
 
-  // Define logic for what constitutes a severe fall or anomaly
-  // Example: impactScore > 80 implies severe impact
   const isSevereImpact = motion.impactScore !== undefined && motion.impactScore > 80;
   
   if (!isSevereImpact) {
@@ -41,30 +58,46 @@ export async function evaluateRisk(
 
   console.log(`[GUARDIAN] High impact detected (score: ${motion.impactScore}). Evaluating risk...`);
 
-  // Start ANS Verification with timeout fallback
-  const verifyPromise = verifyAnsIdentity(agentAnsName);
-  
-  // Timeout for ANS check (we don't want to wait too long during an emergency)
+  // Guardian discovers Memory via DNS
+  const memoryEndpoint = await discoverMemoryEndpoint();
+  console.log(`[GUARDIAN] Discovered Memory service at ${memoryEndpoint}`);
+
+  // Guardian calls Memory's endpoint over HTTP, presenting its own identity
   let isAnsVerified = false;
+  let memoryContext = null;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 2000);
+
   try {
-    isAnsVerified = await Promise.race([
-      verifyPromise,
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000))
-    ]);
+    const contextRes = await fetch(`${memoryEndpoint}/api/memory/context`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentAnsName }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (contextRes.ok) {
+      isAnsVerified = true;
+      memoryContext = await contextRes.json();
+      console.log(`[GUARDIAN] Memory verified identity and released context.`);
+    } else {
+      console.warn(`[GUARDIAN] Memory denied access or failed: ${contextRes.status}`);
+    }
   } catch (err) {
-    console.error("[GUARDIAN] ANS verification failed during emergency evaluation", err);
+    console.error("[GUARDIAN] Failed to reach Memory service", err);
   }
 
   // Construct message based on ANS status and vision context
   let message = "";
   if (isAnsVerified) {
     message = `[GUARDIAN ALERT] IDENTITY VERIFIED (${agentAnsName}). Severe impact detected at ${new Date(motion.timestampMs).toLocaleTimeString()}.`;
-    if (vision) {
-      message += ` Context: ${vision.sceneDescription}. People present: ${vision.hasPeople ? 'Yes' : 'No'}.`;
+    if (vision || memoryContext?.sceneDescription) {
+      message += ` Context: ${vision?.sceneDescription || memoryContext?.sceneDescription}.`;
     }
   } else {
     // Fallback: Low context, immediate minimal SMS
-    message = `[EMERGENCY FALLBACK] Potential severe impact detected. ANS verification timed out or failed. Please check on the user immediately.`;
+    message = `[EMERGENCY FALLBACK] Potential severe impact detected. ANS verification failed. Please check on the user immediately.`;
   }
 
   // Log the REAL message to the terminal for the judges

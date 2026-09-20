@@ -89,13 +89,21 @@ export interface Mission {
   };
 }
 
+export interface AnsCheck {
+  name: string;
+  question: string;
+  mechanism: string;
+  passed: boolean;
+}
+
 export interface AgentAccessRequest {
   id: string;
   agentAnsName: string;
   requestedScopes: string[];
   missionId?: string;
-  verificationStatus: "verifying" | "verified" | "blocked";
+  verificationStatus: "verifying" | "verified" | "blocked" | "PENDING VALIDATION";
   decision: "allow" | "deny" | "pending";
+  checks?: AnsCheck[];
   timestampMs: number;
 }
 
@@ -229,7 +237,7 @@ export interface DashboardState {
     id: string;
     name: string;
     ans: string;
-    state: "IDENTITY VERIFIED" | "STANDBY" | "BLOCKED" | "VERIFYING…";
+    state: "IDENTITY VERIFIED" | "STANDBY" | "BLOCKED" | "VERIFYING…" | "PENDING VALIDATION";
   }>;
   lastAccessRequest: AgentAccessRequest | null;
   mode: string;

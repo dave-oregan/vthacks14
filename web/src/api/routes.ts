@@ -210,5 +210,27 @@ export function createApiRouter(app: SightlineApp) {
     res.json({ ok: true });
   });
 
+  router.post("/memory/context", async (req, res) => {
+    const agentAnsName = String(req.body?.agentAnsName ?? "");
+    const result = await app.requestAgentAccess(agentAnsName, ["location", "memory.read", "camera.read"]);
+    
+    if (result.decision === "allow") {
+       const state = app.getDashboardState();
+       const detectedLabels = state.latestDetections.map(d => d.displayName);
+       const uniqueLabels = Array.from(new Set(detectedLabels));
+       const sceneDescription = uniqueLabels.length > 0 
+          ? `Detected objects: ${uniqueLabels.join(", ")}.`
+          : "No objects recently detected.";
+
+       res.json({
+         location: state.session?.lastLocation ?? null,
+         hasFrame: !!state.latestFrameJpegBase64,
+         sceneDescription
+       });
+    } else {
+       res.status(403).json({ error: "Access Denied by ANS", reason: result.verificationStatus });
+    }
+  });
+
   return router;
 }
