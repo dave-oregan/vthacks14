@@ -7,6 +7,7 @@ export type EmergencyAlert = {
   reason: string;
   message: string;
   location?: { latitude: number; longitude: number } | null;
+  policeBackup?: boolean;
 };
 
 export function EmergencyModal({
@@ -17,6 +18,7 @@ export function EmergencyModal({
   onDismiss: () => void;
 }) {
   if (!alert.active) return null;
+  const police = Boolean(alert.policeBackup);
   const hasLoc =
     alert.location != null &&
     Number.isFinite(alert.location.latitude) &&
@@ -28,26 +30,38 @@ export function EmergencyModal({
   return (
     <div className="modal-backdrop emergency-backdrop" role="alertdialog" aria-modal="true">
       <div className="modal emergency-modal">
-        <div className="emergency-banner">DEMO ONLY — NO REAL 911 CALL</div>
+        <div className="emergency-banner">
+          {police
+            ? "DEMO ONLY — NO REAL DISPATCH"
+            : "DEMO ONLY — NO REAL 911 CALL"}
+        </div>
         <div className="modal-header">
           <div>
-            <div className="emergency-title">Possible fall detected</div>
+            <div className="emergency-title">
+              {police ? "Officer down — requesting backup" : "Possible fall detected"}
+            </div>
             <div className="modal-sub">
-              SIGHTLINE would contact 911 with last-known phone location
+              {police
+                ? "SIGHTLINE would request backup with last-known officer location"
+                : "SIGHTLINE would contact 911 with last-known phone location"}
             </div>
           </div>
         </div>
         <div className="stack" style={{ gap: 10 }}>
           <div className="row">
             <span className="k">Status</span>
-            <span className="v status-blocked">CONTACTING 911… (simulated)</span>
+            <span className="v status-blocked">
+              {police ? "REQUESTING BACKUP… (simulated)" : "CONTACTING 911… (simulated)"}
+            </span>
           </div>
           <div className="row">
             <span className="k">Impact</span>
-            <span className="v">{alert.peakImpactG}g · freefall {alert.freefallMs}ms</span>
+            <span className="v">
+              {alert.peakImpactG}g · freefall {alert.freefallMs}ms
+            </span>
           </div>
           <div className="row">
-            <span className="k">Phone location</span>
+            <span className="k">{police ? "Officer location" : "Phone location"}</span>
             <span className="v" style={{ color: hasLoc ? "var(--accent)" : undefined }}>
               {loc}
             </span>

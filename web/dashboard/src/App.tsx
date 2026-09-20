@@ -136,8 +136,7 @@ export function App() {
     setPicker(null);
   }
 
-  const showBlockingEmergency =
-    Boolean(state?.emergencyAlert?.active) && !state?.emergencyAlert?.policeBackup;
+  const showBlockingEmergency = Boolean(state?.emergencyAlert?.active);
 
   const danger = police?.dangerLevel ?? 0;
   const backupPct = Math.round((police?.backupThreshold ?? 0.55) * 100);
@@ -146,59 +145,65 @@ export function App() {
     <div className={`app ${policeMode ? "app--police" : ""}`}>
       <header className="header">
         <div className="brand">
-          <h1>SIGHTLINE</h1>
+          <div className="brand-mark">
+            <h1>SIGHTLINE</h1>
+          </div>
           <span>
             {policeMode
-              ? "Police suite — weapons, plates, officer safety & backup"
+              ? "Officer safety suite — threats, crowds, hostility & backup"
               : "Mission Control — link the phone, recall what the world forgot"}
           </span>
         </div>
         <div className="header-meta">
-          <div className="pill">
-            <span className={`dot ${state?.live ? "live" : ""}`} />
-            {state?.live ? "LIVE" : "IDLE"}
+          <div className="status-rail">
+            <div className="pill">
+              <span className={`dot ${state?.live ? "live" : ""}`} />
+              {state?.live ? "LIVE" : "IDLE"}
+            </div>
+            <div className="pill">
+              <span className={`dot ${linkStatus.tone}`} />
+              {linkStatus.label}
+            </div>
+            <div className="pill" title={lasStatus.title}>
+              <span className={`dot ${lasStatus.tone}`} />
+              {lasStatus.label}
+            </div>
+            <div className="pill">{connected ? "WS OK" : "WS…"}</div>
+            <div className="pill">{state?.mode ?? "STANDBY"}</div>
+            <div className="pill">{state?.objects.length ?? 0} mem</div>
           </div>
-          <div className="pill">
-            <span className={`dot ${linkStatus.tone}`} />
-            {linkStatus.label}
+          <div className="action-rail">
+            <button
+              className={`btn ${policeMode ? "primary" : ""}`}
+              onClick={() => run("police", () => setPoliceMode(!policeMode))}
+              disabled={!!busy}
+              title="Toggle police safety suite"
+            >
+              {policeMode ? "Police ON" : "Police"}
+            </button>
+            <button
+              className="btn danger"
+              onClick={() => run("fall", simulateFall)}
+              disabled={!!busy}
+              title={
+                policeMode
+                  ? "Demo: officer down → request backup"
+                  : "Demo only — does not call 911"
+              }
+            >
+              {policeMode ? "Simulate Down" : "Simulate Fall"}
+            </button>
+            <button className="btn" onClick={() => run("reset", resetDemo)} disabled={!!busy}>
+              Reset
+            </button>
           </div>
-          <div className="pill" title={lasStatus.title}>
-            <span className={`dot ${lasStatus.tone}`} />
-            {lasStatus.label}
-          </div>
-          <div className="pill">{connected ? "WS OK" : "WS…"}</div>
-          <div className="pill">{state?.mode ?? "STANDBY"}</div>
-          <div className="pill">{state?.objects.length ?? 0} mem</div>
-          <button
-            className={`btn ${policeMode ? "primary" : ""}`}
-            onClick={() => run("police", () => setPoliceMode(!policeMode))}
-            disabled={!!busy}
-            title="Toggle police safety suite"
-          >
-            {policeMode ? "Police ON" : "Police"}
-          </button>
-          <button
-            className="btn danger"
-            onClick={() => run("fall", simulateFall)}
-            disabled={!!busy}
-            title={
-              policeMode
-                ? "Demo: officer down → request backup"
-                : "Demo only — does not call 911"
-            }
-          >
-            {policeMode ? "Simulate Down" : "Simulate Fall"}
-          </button>
-          <button className="btn" onClick={() => run("reset", resetDemo)} disabled={!!busy}>
-            Reset
-          </button>
         </div>
       </header>
 
       <div className="main">
         <section className="panel pov-panel">
           <div className="panel-title">
-            {policeMode ? "Live POV · officer safety" : "Live POV · detections"}
+            {policeMode ? "Field POV · officer safety" : "Field POV · live detections"}
           </div>
           <LivePOV
             jpegBase64={state?.latestFrameJpegBase64 ?? null}

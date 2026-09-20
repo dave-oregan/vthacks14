@@ -135,7 +135,16 @@ export function LivePOV({
       })}
       <div
         className="pill"
-        style={{ position: "absolute", left: 8, bottom: 8, opacity: 0.92 }}
+        style={{
+        position: "absolute",
+        left: 14,
+        bottom: 14,
+        opacity: 0.9,
+        zIndex: 3,
+        background: "rgba(7, 9, 13, 0.72)",
+        color: "rgba(244, 246, 248, 0.88)",
+        borderColor: "rgba(255,255,255,0.12)",
+      }}
       >
         {detections.length} obj{detections.length === 1 ? "" : "s"}
         {source ? ` · ${source}` : ""}
