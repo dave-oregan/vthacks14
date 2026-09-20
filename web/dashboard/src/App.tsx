@@ -152,6 +152,14 @@ export function App() {
             {policeMode ? "Police ON" : "Police"}
           </button>
           <button
+            className={`btn ${cocoFallback ? "primary" : ""}`}
+            onClick={() => run("coco", () => setCocoFallback(!cocoFallback))}
+            disabled={!!busy}
+            title="When LocateAnything returns nothing, fall back to local COCO-SSD"
+          >
+            {cocoFallback ? "COCO ON" : "COCO OFF"}
+          </button>
+          <button
             className="btn danger"
             onClick={() => run("fall", simulateFall)}
             disabled={!!busy}

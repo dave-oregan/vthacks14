@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { config } from "./config.js";
 import { RelayHub, type RelayVideoFrame } from "./relay/relayHub.js";
 import { MemoryStore } from "./memory/store.js";
 import { answerRecallQuery, toRecallMatch } from "./gemini/reasoner.js";

@@ -264,11 +264,6 @@ button, input { font: inherit; }
   height: 100%;
   object-fit: contain;
   display: block;
-  animation: frame-fade 0.35s var(--ease);
-}
-@keyframes frame-fade {
-  from { opacity: 0.65; }
-  to { opacity: 1; }
 }
 .pov-empty {
   position: absolute;
@@ -288,11 +283,6 @@ button, input { font: inherit; }
   position: absolute;
   border: 1.5px solid var(--box-color, #5eead4);
   pointer-events: none;
-  animation: box-in 0.28s var(--ease) both;
-}
-@keyframes box-in {
-  from { opacity: 0; transform: scale(0.98); }
-  to { opacity: 1; transform: none; }
 }
 .overlay-label {
   position: absolute;
