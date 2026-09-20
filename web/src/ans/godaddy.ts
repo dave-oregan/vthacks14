@@ -56,7 +56,6 @@ export async function verifyAnsIdentity(ansName: string): Promise<boolean> {
     const apiUrl = `https://api.godaddy.com/v1/domains/${domainPart}/records/TXT`; // Example endpoint
     
     // Simulate real fetch (replace with real fetch when API is known)
-    /*
     const authHeader = config.godaddyApiSecret 
       ? `sso-key ${config.godaddyApiKey}:${config.godaddyApiSecret}`
       : `Bearer ${config.godaddyApiKey}`; // Support PATs
@@ -70,14 +69,17 @@ export async function verifyAnsIdentity(ansName: string): Promise<boolean> {
     });
 
     if (!response.ok) {
+      if (response.status === 404 || response.status === 422) {
+        console.warn(`[ANS] Domain ${domainPart} not found or invalid (status ${response.status}). Defaulting to domain string match for hackathon.`);
+        const isFallbackVerified = domainPart.endsWith(config.ansTeamDomain);
+        identityCache.set(ansName, { verified: isFallbackVerified, timestampMs: now });
+        return isFallbackVerified;
+      }
       throw new Error(`GoDaddy API returned ${response.status}`);
     }
+    
     const data = await response.json();
     const isVerified = data.some((record: any) => record.name === "ans-verification");
-    */
-
-    // For now, if keys exist but we don't have the exact API shape, simulate success if it matches our domain
-    const isVerified = domainPart.endsWith(config.ansTeamDomain);
     
     identityCache.set(ansName, { verified: isVerified, timestampMs: now });
     return isVerified;

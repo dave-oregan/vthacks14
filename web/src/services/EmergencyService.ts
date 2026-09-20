@@ -4,6 +4,8 @@ import type { MemoryStore } from "../memory/store.js";
 import { FallDetector, type FallEvent, type MotionSample } from "../motion/fallDetector.js";
 import { speak } from "../voice/elevenlabs.js";
 import type { EmergencyAlert, GeoPoint } from "../shared/types.js";
+import { evaluateRisk } from "../api/guardian.js";
+import { config } from "../config.js";
 
 export class EmergencyService extends EventEmitter {
   private fallDetector = new FallDetector();
@@ -111,6 +113,16 @@ export class EmergencyService extends EventEmitter {
         alert,
       });
     }
+
+    // Connect to the Guardian API (Twilio and GoDaddy ANS)
+    // Map peakImpactG to 0-100 score. 4.0g is our threshold for a hard impact.
+    // 4.0g -> 80 score.
+    const impactScore = Math.min(100, Math.max(0, (fall.peakImpactG / 5.0) * 100)); 
+    void evaluateRisk(
+      { timestampMs: fall.triggeredAtMs, impactScore },
+      undefined,
+      `ans://v1.0.0.guardian.${config.ansTeamDomain}`
+    ).catch(err => console.error("[EmergencyService] Failed to evaluate risk with Guardian API:", err));
 
     void speak(
       policeBackup
