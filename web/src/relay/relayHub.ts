@@ -159,10 +159,23 @@ export class RelayHub extends EventEmitter {
     const sessionId = String(msg.sessionId ?? this.session.sessionId);
 
     if (type === "location") {
+      const latitude = Number(msg.latitude ?? msg.lat);
+      const longitude = Number(msg.longitude ?? msg.lng ?? msg.lon);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        console.warn("[relay] ignoring location with non-finite coords", {
+          latitude: msg.latitude,
+          longitude: msg.longitude,
+        });
+        return;
+      }
+      if (latitude === 0 && longitude === 0) {
+        console.warn("[relay] ignoring 0,0 location fix");
+        return;
+      }
       const geo: GeoPoint & { sessionId: string } = {
         sessionId,
-        latitude: Number(msg.latitude),
-        longitude: Number(msg.longitude),
+        latitude,
+        longitude,
         altitudeMeters: msg.altitudeMeters == null ? null : Number(msg.altitudeMeters),
         horizontalAccuracyMeters:
           msg.horizontalAccuracyMeters == null
@@ -172,6 +185,12 @@ export class RelayHub extends EventEmitter {
       };
       this.session.lastLocation = geo;
       this.session.updatedAtMs = nowMs();
+      console.log(
+        `[relay] location ${latitude.toFixed(5)},${longitude.toFixed(5)}` +
+          (geo.horizontalAccuracyMeters != null
+            ? ` ±${Math.round(geo.horizontalAccuracyMeters)}m`
+            : ""),
+      );
       this.emit("location", geo);
       this.emit("status", this.session);
       return;

@@ -7,6 +7,7 @@ export type EmergencyAlert = {
   reason: string;
   message: string;
   location?: { latitude: number; longitude: number } | null;
+  guardianDistress?: boolean;
   policeBackup?: boolean;
 };
 
@@ -18,7 +19,7 @@ export function EmergencyModal({
   onDismiss: () => void;
 }) {
   if (!alert.active) return null;
-  const police = Boolean(alert.policeBackup);
+  const guardian = Boolean(alert.guardianDistress ?? alert.policeBackup);
   const hasLoc =
     alert.location != null &&
     Number.isFinite(alert.location.latitude) &&
@@ -31,18 +32,18 @@ export function EmergencyModal({
     <div className="modal-backdrop emergency-backdrop" role="alertdialog" aria-modal="true">
       <div className="modal emergency-modal">
         <div className="emergency-banner">
-          {police
+          {guardian
             ? "DEMO ONLY — NO REAL DISPATCH"
             : "DEMO ONLY — NO REAL 911 CALL"}
         </div>
         <div className="modal-header">
           <div>
             <div className="emergency-title">
-              {police ? "Officer down — requesting backup" : "Possible fall detected"}
+              {guardian ? "Possible responder distress" : "Possible fall detected"}
             </div>
             <div className="modal-sub">
-              {police
-                ? "SIGHTLINE would request backup with last-known officer location"
+              {guardian
+                ? "SIGHTLINE surfaces the observation — humans decide next steps"
                 : "SIGHTLINE would contact 911 with last-known phone location"}
             </div>
           </div>
@@ -51,7 +52,7 @@ export function EmergencyModal({
           <div className="row">
             <span className="k">Status</span>
             <span className="v status-blocked">
-              {police ? "REQUESTING BACKUP… (simulated)" : "CONTACTING 911… (simulated)"}
+              {guardian ? "ESCALATION PREVIEW… (simulated)" : "CONTACTING 911… (simulated)"}
             </span>
           </div>
           <div className="row">
@@ -61,7 +62,7 @@ export function EmergencyModal({
             </span>
           </div>
           <div className="row">
-            <span className="k">{police ? "Officer location" : "Phone location"}</span>
+            <span className="k">{guardian ? "Responder location" : "Phone location"}</span>
             <span className="v" style={{ color: hasLoc ? "var(--accent)" : undefined }}>
               {loc}
             </span>

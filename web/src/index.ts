@@ -38,16 +38,17 @@ const dashWss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
   const { pathname } = new URL(req.url ?? "/", `http://${req.headers.host}`);
+  const remote = req.socket.remoteAddress ?? "?";
   if (pathname === "/ws/relay") {
     relayWss.handleUpgrade(req, socket, head, (ws) => {
-      console.log("[ws] iOS relay connected");
+      console.log(`[ws] iOS relay connected from ${remote}`);
       appCore.relay.attach(ws);
     });
     return;
   }
   if (pathname === "/ws/dashboard") {
     dashWss.handleUpgrade(req, socket, head, (ws) => {
-      console.log("[ws] dashboard connected");
+      console.log(`[ws] dashboard connected from ${remote}`);
       ws.send(JSON.stringify({ type: "state", payload: appCore.getDashboardState() }));
       const onDash = (state: unknown) => {
         if (ws.readyState === ws.OPEN) {

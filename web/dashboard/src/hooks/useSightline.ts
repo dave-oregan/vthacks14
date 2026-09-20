@@ -49,6 +49,7 @@ export type DashState = {
     reason: string;
     message: string;
     location?: { latitude: number; longitude: number } | null;
+    guardianDistress?: boolean;
     policeBackup?: boolean;
   } | null;
   locateAnything?: {
@@ -58,22 +59,12 @@ export type DashState = {
     latencyMs: number | null;
     detail?: string;
   };
+  guardianMode?: boolean;
+  /** @deprecated */
   policeMode?: boolean;
   cocoFallback?: boolean;
-  sideAlerts?: SideAlert[];
-  policeStatus?: {
-    dangerLevel: number;
-    dangerLabel: string;
-    topThreat: string | null;
-    topConfidence: number;
-    backupThreshold: number;
-    backupArmed: boolean;
-    groupCount: number;
-    largeGroup: boolean;
-    hostility: number;
-    hostilityLabel: string;
-    dangerTicks?: number;
-  };
+  guardianEvents?: GuardianEvent[];
+  guardianStatus?: GuardianStatus;
   session: {
     connected: boolean;
     sessionId: string;
@@ -87,17 +78,44 @@ export type DashState = {
   } | null;
 };
 
-export type SideAlert = {
+export type GuardianEvent = {
   id: string;
-  kind: "danger_weapon" | "plate_capture" | "backup_recommend" | "officer_down" | "info";
-  severity: "info" | "warn" | "critical";
+  timestamp: number;
+  category:
+    | "safety_resource"
+    | "hazard"
+    | "medical"
+    | "potential_threat"
+    | "vehicle"
+    | "location"
+    | "distress"
+    | "environment"
+    | "system";
+  type: string;
   title: string;
-  message: string;
-  timestampMs: number;
-  ttlMs: number | null;
-  thumbBase64?: string | null;
-  label?: string;
-  location?: { latitude: number; longitude: number } | null;
+  description: string;
+  confidence?: number;
+  severity: "info" | "low" | "medium" | "high" | "critical";
+  source: string;
+  location?: { latitude: number; longitude: number; accuracy?: number | null };
+  frameReference?: string;
+  metadata?: Record<string, unknown>;
+  status: "new" | "confirmed" | "dismissed" | "resolved";
+  requiresReview?: boolean;
+};
+
+export type GuardianStatus = {
+  highPriority: number;
+  informational: number;
+  groupCount: number;
+  largeGroup: boolean;
+  eventCount: number;
+  sensors: {
+    camera: boolean;
+    location: boolean;
+    motion: boolean;
+    audio: boolean;
+  };
 };
 
 export type RecallMatch = {
@@ -274,17 +292,25 @@ export function useSightline() {
     await fetch("/api/demo/reset", { method: "POST" });
   }
 
-  async function setPoliceMode(enabled: boolean) {
-    setState((prev) => (prev ? { ...prev, policeMode: enabled, sideAlerts: enabled ? prev.sideAlerts ?? [] : [] } : prev));
-    const res = await fetch("/api/mode/police", {
+  async function setGuardianMode(enabled: boolean) {
+    setState((prev) =>
+      prev
+        ? {
+            ...prev,
+            guardianMode: enabled,
+            policeMode: enabled,
+            guardianEvents: enabled ? prev.guardianEvents ?? [] : [],
+          }
+        : prev,
+    );
+    const res = await fetch("/api/mode/guardian", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled }),
     });
-    const data = (await res.json()) as { policeMode?: boolean };
-    setState((prev) =>
-      prev ? { ...prev, policeMode: Boolean(data.policeMode ?? enabled) } : prev,
-    );
+    const data = (await res.json()) as { guardianMode?: boolean; policeMode?: boolean };
+    const on = Boolean(data.guardianMode ?? data.policeMode ?? enabled);
+    setState((prev) => (prev ? { ...prev, guardianMode: on, policeMode: on } : prev));
   }
 
   async function setCocoFallback(enabled: boolean) {
@@ -300,50 +326,17 @@ export function useSightline() {
     );
   }
 
-  async function setBackupThreshold(threshold: number) {
-    setState((prev) =>
-      prev?.policeStatus
-        ? {
-            ...prev,
-            policeStatus: { ...prev.policeStatus, backupThreshold: threshold },
-          }
-        : prev,
-    );
-    const res = await fetch("/api/mode/backup-threshold", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ threshold }),
-    });
-    const data = (await res.json()) as {
-      backupThreshold?: number;
-      policeStatus?: DashState["policeStatus"];
-    };
-    setState((prev) =>
-      prev
-        ? {
-            ...prev,
-            policeStatus: data.policeStatus ?? {
-              dangerLevel: prev.policeStatus?.dangerLevel ?? 0,
-              dangerLabel: prev.policeStatus?.dangerLabel ?? "Clear",
-              topThreat: prev.policeStatus?.topThreat ?? null,
-              topConfidence: prev.policeStatus?.topConfidence ?? 0,
-              backupThreshold: data.backupThreshold ?? threshold,
-              backupArmed: prev.policeStatus?.backupArmed ?? false,
-            },
-          }
-        : prev,
-    );
-  }
-
-  async function dismissSideAlert(id: string) {
-    let wasDown = false;
+  async function dismissGuardianEvent(id: string) {
+    let wasDistress = false;
     setState((prev) => {
       if (!prev) return prev;
-      wasDown = (prev.sideAlerts ?? []).some((a) => a.id === id && a.kind === "officer_down");
+      wasDistress = (prev.guardianEvents ?? []).some(
+        (e) => e.id === id && e.category === "distress",
+      );
       return {
         ...prev,
-        sideAlerts: (prev.sideAlerts ?? []).filter((a) => a.id !== id),
-        ...(wasDown
+        guardianEvents: (prev.guardianEvents ?? []).filter((e) => e.id !== id),
+        ...(wasDistress
           ? {
               emergencyAlert: null,
               mode: prev.mode === "EMERGENCY" ? "LIVE" : prev.mode,
@@ -351,14 +344,55 @@ export function useSightline() {
           : {}),
       };
     });
-    await fetch("/api/alerts/dismiss", {
+    await fetch("/api/guardian/events/dismiss", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
     });
-    if (wasDown) {
+    if (wasDistress) {
       await fetch("/api/emergency/dismiss", { method: "POST" });
     }
+  }
+
+  async function confirmGuardianEvent(id: string) {
+    await fetch("/api/guardian/events/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+  }
+
+  async function queryGuardianMemory(query: string) {
+    const res = await fetch("/api/guardian/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    return (await res.json()) as { text: string; matches: GuardianEvent[] };
+  }
+
+  async function injectGuardianDemo(scenario: string) {
+    const res = await fetch(`/api/guardian/demo/${encodeURIComponent(scenario)}`, {
+      method: "POST",
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      guardianEvents?: GuardianEvent[];
+      event?: GuardianEvent;
+    };
+    if (data.guardianEvents) {
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              guardianMode: true,
+              policeMode: true,
+              guardianEvents: data.guardianEvents,
+            }
+          : prev,
+      );
+    }
+    return data;
   }
 
   return {
@@ -371,9 +405,11 @@ export function useSightline() {
     simulateFall,
     dismissEmergency,
     resetDemo,
-    setPoliceMode,
+    setGuardianMode,
     setCocoFallback,
-    setBackupThreshold,
-    dismissSideAlert,
+    dismissGuardianEvent,
+    confirmGuardianEvent,
+    queryGuardianMemory,
+    injectGuardianDemo,
   };
 }

@@ -14,48 +14,19 @@ import { config } from "../config.js";
 import type { BBox, Detection } from "../shared/types.js";
 import { normalizeLabel } from "../memory/store.js";
 import sharp from "sharp";
+import {
+  DEFAULT_CATEGORIES,
+  GUARDIAN_CATEGORIES,
+  POLICE_CATEGORIES,
+  getDetectCategories,
+} from "../guardian/categories.js";
 
-const DEFAULT_CATEGORIES = [
-  "cell phone",
-  "laptop",
-  "backpack",
-  "handbag",
-  "bottle",
-  "cup",
-  "book",
-  "remote",
-  "keyboard",
-  "mouse",
-  "person",
-  "suitcase",
-  "umbrella",
-];
-
-/** LocateAnything classes when Police mode is on — weapons / people / hostility cues only. */
-export const POLICE_CATEGORIES = [
-  "gun",
-  "handgun",
-  "pistol",
-  "rifle",
-  "firearm",
-  "weapon",
-  "knife",
-  "blade",
-  "machete",
-  "person",
-  "crowd",
-  "group of people",
-  "fist",
-  "fighting",
-  "punching",
-  "raised fist",
-  "license plate",
-];
-
-export function getDetectCategories(policeMode: boolean): string[] {
-  if (!policeMode) return DEFAULT_CATEGORIES;
-  return [...POLICE_CATEGORIES];
-}
+export {
+  DEFAULT_CATEGORIES,
+  GUARDIAN_CATEGORIES,
+  POLICE_CATEGORIES,
+  getDetectCategories,
+};
 
 export function hasLocateAnything(): boolean {
   return Boolean(config.locateAnythingUrl);

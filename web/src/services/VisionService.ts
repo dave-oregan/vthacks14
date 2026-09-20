@@ -50,8 +50,9 @@ export class VisionService extends EventEmitter {
     private relay: RelayHub,
     private store: MemoryStore,
     private onSyncMissions: (detections: Detection[], location: GeoPoint | null, sessionId: string) => Promise<void>,
-    private isPoliceMode: () => boolean = () => false,
+    private isGuardianMode: () => boolean = () => false,
     allowCocoFallback: () => boolean = () => config.cocoFallback,
+    private getStickyLocation: () => GeoPoint | null = () => null,
   ) {
     super();
     this.allowCocoFallback = allowCocoFallback;
@@ -91,7 +92,7 @@ export class VisionService extends EventEmitter {
     const useServerVision =
       config.visionMode === "server" ||
       config.visionMode === "both" ||
-      this.isPoliceMode() ||
+      this.isGuardianMode() ||
       hasLocateAnything();
 
     if (!useServerVision) return;
@@ -142,7 +143,7 @@ export class VisionService extends EventEmitter {
         this.lastLocateAnythingAt = Date.now();
         const laStart = Date.now();
         const la = await detectWithLocateAnything(frame.jpeg, {
-          categories: getDetectCategories(this.isPoliceMode()),
+          categories: getDetectCategories(this.isGuardianMode()),
         });
         laMs = Date.now() - laStart;
         if (la.length > 0) {
@@ -319,7 +320,20 @@ export class VisionService extends EventEmitter {
     detections: Detection[],
     frame: { jpeg: Buffer; sessionId: string; timestampMs: number; sequence: number },
   ): Promise<void> {
-    const location = this.relay.getSession()?.lastLocation ?? null;
+    const sessionLoc = this.relay.getSession()?.lastLocation ?? this.getStickyLocation();
+    const location =
+      sessionLoc &&
+      Number.isFinite(sessionLoc.latitude) &&
+      Number.isFinite(sessionLoc.longitude) &&
+      !(sessionLoc.latitude === 0 && sessionLoc.longitude === 0)
+        ? sessionLoc
+        : null;
+    if (!location && detections.length > 0) {
+      // One-line breadcrumb so "no geo" is diagnosable during demos.
+      if (this.frameCounter % 40 === 0) {
+        console.warn("[vision] persisting detections without GPS — waiting for iPhone location");
+      }
+    }
     const toStore = detections.filter((d) => d.label !== "person");
     await Promise.all(
       toStore.map(async (det) => {

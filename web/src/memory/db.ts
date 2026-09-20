@@ -146,12 +146,22 @@ const OBJECT_MIRROR_THROTTLE_MS = 5000;
  * Upsert an object memory card. The JPEG thumbnail is deliberately NOT sent -
  * it is large, and it is a frame of someone's room.
  */
-export function mirrorObject(object: MemoryObject): void {
+export function mirrorObject(
+  object: MemoryObject,
+  opts?: { force?: boolean },
+): void {
   if (!db) return;
   const now = Date.now();
   const prev = lastObjectMirrorMs.get(object.id);
   const stateful = object.status !== "observed";
-  if (!stateful && prev !== undefined && now - prev < OBJECT_MIRROR_THROTTLE_MS) return;
+  if (
+    !opts?.force &&
+    !stateful &&
+    prev !== undefined &&
+    now - prev < OBJECT_MIRROR_THROTTLE_MS
+  ) {
+    return;
+  }
   lastObjectMirrorMs.set(object.id, now);
 
   void db

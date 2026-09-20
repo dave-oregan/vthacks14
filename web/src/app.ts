@@ -18,7 +18,7 @@ import type {
 import { VisionService } from "./services/VisionService.js";
 import { EmergencyService } from "./services/EmergencyService.js";
 import { MissionService } from "./services/MissionService.js";
-import { PoliceService } from "./services/PoliceService.js";
+import { GuardianService } from "./services/GuardianService.js";
 import {
   checkLocateAnythingHealth,
   hasLocateAnything,
@@ -33,7 +33,7 @@ export class SightlineApp extends EventEmitter {
   private visionService: VisionService;
   private emergencyService: EmergencyService;
   private missionService: MissionService;
-  private policeService: PoliceService;
+  private guardianService: GuardianService;
 
   private transcriptSnippet = "";
   private micSpeaking = false;
@@ -56,16 +56,17 @@ export class SightlineApp extends EventEmitter {
 
     this.missionService = new MissionService(this.store);
     this.emergencyService = new EmergencyService(this.relay, this.store);
-    this.policeService = new PoliceService(this.store);
-    this.emergencyService.setPoliceModeGetter(() => this.policeService.isEnabled());
+    this.guardianService = new GuardianService(this.store);
+    this.emergencyService.setGuardianModeGetter(() => this.guardianService.isEnabled());
     this.visionService = new VisionService(
       this.relay,
       this.store,
       async (dets, loc, session) => {
         await this.missionService.syncTrackMissions(dets, loc, session);
       },
-      () => this.policeService.isEnabled(),
+      () => this.guardianService.isEnabled(),
       () => this.cocoFallbackEnabled,
+      () => this.emergencyService.lastKnownLocation ?? this.relay.getSession()?.lastLocation ?? null,
     );
 
     this.wireServices();
@@ -109,7 +110,7 @@ export class SightlineApp extends EventEmitter {
         location: GeoPoint | null;
         sessionId: string;
       }) => {
-        void this.policeService.ingestDetections(
+        void this.guardianService.ingestDetections(
           payload.jpeg,
           payload.detections,
           payload.location,
@@ -118,8 +119,8 @@ export class SightlineApp extends EventEmitter {
       },
     );
 
-    this.policeService.on("alerts", () => this.broadcast(true));
-    this.policeService.on("status", () => this.broadcast());
+    this.guardianService.on("events", () => this.broadcast(true));
+    this.guardianService.on("status", () => this.broadcast());
 
     this.emergencyService.on("emergency", (alert) => {
       this.mode = alert ? "EMERGENCY" : this.relay.getSession()?.connected ? "LIVE" : "STANDBY";
@@ -127,13 +128,13 @@ export class SightlineApp extends EventEmitter {
       this.broadcast(true);
     });
     this.emergencyService.on(
-      "police_officer_down",
+      "guardian_responder_distress",
       (payload: {
         peakImpactG: number;
         location: GeoPoint | null;
         sessionId: string;
       }) => {
-        this.policeService.pushOfficerDown(payload);
+        this.guardianService.ingestMotionFall(payload);
       },
     );
     // Wearable + phone mic audio arrives here. Until now nothing subscribed
@@ -167,8 +168,17 @@ export class SightlineApp extends EventEmitter {
 
     this.relay.on("location", (geo: GeoPoint & { sessionId: string }) => {
       this.emergencyService.updateLocation(geo);
+      // GPS often arrives after the first vision pass — backfill recent cards.
+      const stamped = this.store.stampLocation(geo);
+      if (stamped > 0) {
+        console.log(
+          `[memory] stamped GPS onto ${stamped} recent object(s) ` +
+            `(${geo.latitude.toFixed(5)}, ${geo.longitude.toFixed(5)})`,
+        );
+      }
+      this.guardianService.setSensorHints({ location: true });
       void this.missionService.evaluateLeaveBehind(geo, this.visionService.getLatestDetections());
-      this.broadcast();
+      this.broadcast(true);
     });
 
     this.relay.on("motion", (sample) => {
@@ -198,21 +208,27 @@ export class SightlineApp extends EventEmitter {
     this.relay.on("status", () => this.broadcast());
   }
 
-  setPoliceMode(enabled: boolean): { policeMode: boolean } {
-    this.policeService.setEnabled(enabled);
+  setGuardianMode(enabled: boolean): { guardianMode: boolean; policeMode: boolean } {
+    this.guardianService.setEnabled(enabled);
     if (enabled) {
       this.store.addEvent({
         type: "stream_event",
         timestampMs: Date.now(),
         sessionId: this.relay.getSession()?.sessionId,
-        description: "Police mode ON — scanning for weapons, plates, officer safety",
+        description: "Guardian mode ON — situational awareness & visual memory for first responders",
       });
-      console.log("[police] mode ON");
+      console.log("[guardian] mode ON");
     } else {
-      console.log("[police] mode OFF");
+      console.log("[guardian] mode OFF");
     }
     this.broadcast(true);
-    return { policeMode: this.policeService.isEnabled() };
+    const on = this.guardianService.isEnabled();
+    return { guardianMode: on, policeMode: on };
+  }
+
+  /** @deprecated Use setGuardianMode */
+  setPoliceMode(enabled: boolean): { guardianMode: boolean; policeMode: boolean } {
+    return this.setGuardianMode(enabled);
   }
 
   setCocoFallback(enabled: boolean): { cocoFallback: boolean } {
@@ -222,17 +238,112 @@ export class SightlineApp extends EventEmitter {
     return { cocoFallback: this.cocoFallbackEnabled };
   }
 
-  setBackupThreshold(threshold: number): { backupThreshold: number; policeStatus: ReturnType<PoliceService["getStatus"]> } {
-    this.policeService.setBackupThreshold(threshold);
-    this.broadcast(true);
-    return {
-      backupThreshold: this.policeService.getBackupThreshold(),
-      policeStatus: this.policeService.getStatus(),
-    };
+  dismissGuardianEvent(id: string): void {
+    this.guardianService.dismiss(id);
   }
 
+  confirmGuardianEvent(id: string): void {
+    this.guardianService.confirm(id);
+  }
+
+  /** @deprecated */
   dismissSideAlert(id: string): void {
-    this.policeService.dismiss(id);
+    this.dismissGuardianEvent(id);
+  }
+
+  queryGuardianMemory(query: string) {
+    return this.guardianService.queryMemory(query);
+  }
+
+  injectGuardianDemo(scenario: string) {
+    const sessionId = this.relay.getSession()?.sessionId ?? "demo";
+    const loc = this.relay.getSession()?.lastLocation ?? null;
+    const baseLoc = loc
+      ? { latitude: loc.latitude, longitude: loc.longitude, accuracy: loc.horizontalAccuracyMeters }
+      : undefined;
+    switch (scenario) {
+      case "plate":
+        return this.guardianService.injectDemoEvent({
+          category: "vehicle",
+          type: "license_plate_observed",
+          title: "Plate ABC-1234 observed",
+          description: "Simulated plate OCR for demo — Gray Toyota sedan.",
+          confidence: 0.96,
+          severity: "medium",
+          source: "manual",
+          location: baseLoc,
+          metadata: { plateText: "ABC-1234", vehicle: "Gray Toyota sedan", simulated: true },
+          requiresReview: false,
+          simulated: true,
+        });
+      case "aed":
+        return this.guardianService.injectDemoEvent({
+          category: "safety_resource",
+          type: "aed",
+          title: "AED observed",
+          description: "Simulated safety resource near north hallway / elevator.",
+          confidence: 0.93,
+          severity: "info",
+          source: "manual",
+          location: baseLoc,
+          metadata: { resourceType: "aed", humanReadable: "North hallway near elevator", simulated: true },
+          requiresReview: false,
+          simulated: true,
+        });
+      case "firearm":
+        return this.guardianService.injectDemoEvent({
+          category: "potential_threat",
+          type: "possible_firearm",
+          title: "Possible firearm detected",
+          description: "Simulated training imagery — confidence 91%. Observation only; review required.",
+          confidence: 0.91,
+          severity: "high",
+          source: "manual",
+          location: baseLoc,
+          metadata: { simulated: true, trainingImage: true },
+          requiresReview: true,
+          simulated: true,
+        });
+      case "distress": {
+        this.guardianService.setEnabled(true);
+        this.guardianService.ingestAudioTranscript("help", loc, sessionId);
+        return this.guardianService.ingestMotionFall({
+          peakImpactG: 4.2,
+          location: loc,
+          sessionId,
+        });
+      }
+      case "address":
+        return this.guardianService.injectDemoEvent({
+          category: "location",
+          type: "address_observed",
+          title: "214 Main Street observed",
+          description: "Simulated address / street-sign observation.",
+          confidence: 0.93,
+          severity: "info",
+          source: "manual",
+          location: baseLoc,
+          metadata: { address: "214 Main Street", simulated: true },
+          requiresReview: false,
+          simulated: true,
+        });
+      case "extinguisher":
+        return this.guardianService.injectDemoEvent({
+          category: "safety_resource",
+          type: "fire_extinguisher",
+          title: "Fire extinguisher observed",
+          description: "Simulated safety resource near west stairwell.",
+          confidence: 0.9,
+          severity: "info",
+          source: "manual",
+          location: baseLoc,
+          metadata: { resourceType: "fire_extinguisher", simulated: true },
+          requiresReview: false,
+          simulated: true,
+        });
+      default:
+        throw new Error(`Unknown guardian demo scenario: ${scenario}`);
+    }
   }
 
   async ingestClientDetections(
@@ -249,7 +360,7 @@ export class SightlineApp extends EventEmitter {
     this.mode = "LIVE";
 
     // Police mode: browser only feeds people for fast crowd tracking — never overwrite LA.
-    if (this.policeService.isEnabled()) {
+    if (this.guardianService.isEnabled()) {
       const people = (raw ?? [])
         .filter(
           (d) =>
@@ -272,7 +383,7 @@ export class SightlineApp extends EventEmitter {
           },
           source: "coco" as const,
         }));
-      this.policeService.ingestCrowdHint(people);
+      this.guardianService.ingestCrowdHint(people);
       this.broadcast();
       return { count: people.length };
     }
@@ -402,7 +513,7 @@ export class SightlineApp extends EventEmitter {
     this.visionService.reset();
     this.emergencyService.reset();
     this.missionService.reset();
-    this.policeService.reset();
+    this.guardianService.reset();
     this.lastAccessRequest = null;
     this.agentStates = listDemoAgents();
     this.transcriptSnippet = "";
@@ -428,10 +539,25 @@ export class SightlineApp extends EventEmitter {
       transcriptSnippet: this.transcriptSnippet,
       emergencyAlert: this.emergencyService.emergencyAlert,
       locateAnything: this.locateAnythingHealth,
-      policeMode: this.policeService.isEnabled(),
+      guardianMode: this.guardianService.isEnabled(),
+      policeMode: this.guardianService.isEnabled(),
       cocoFallback: this.cocoFallbackEnabled,
-      sideAlerts: this.policeService.getAlerts(),
-      policeStatus: this.policeService.getStatus(),
+      guardianEvents: this.guardianService.getEvents(),
+      guardianStatus: this.guardianService.getStatus(),
+      sideAlerts: [],
+      policeStatus: {
+        dangerLevel: 0,
+        dangerLabel: "Clear",
+        topThreat: null,
+        topConfidence: 0,
+        backupThreshold: 0.55,
+        backupArmed: false,
+        groupCount: this.guardianService.getStatus().groupCount,
+        largeGroup: this.guardianService.getStatus().largeGroup,
+        hostility: 0,
+        hostilityLabel: "n/a",
+        dangerTicks: 0,
+      },
     };
   }
 
