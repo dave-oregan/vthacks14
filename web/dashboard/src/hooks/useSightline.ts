@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { playVoice, type VoicePayload } from "../voice/voicePlayer";
 
 export type DashState = {
   live: boolean;
@@ -120,7 +121,7 @@ export type RecallResult = {
   needsChoice: boolean;
   objectId?: string;
   matches: RecallMatch[];
-  voice?: unknown;
+  voice?: VoicePayload;
 };
 
 export function useSightline() {
@@ -137,6 +138,12 @@ export function useSightline() {
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data) as { type: string; payload: unknown };
+        if (msg.type === "voice") {
+          // The backend generates this with ElevenLabs. Until now nothing
+          // caught it here, so SIGHTLINE never actually made a sound.
+          playVoice(msg.payload as VoicePayload);
+          return;
+        }
         if (msg.type === "state" || msg.type === "frame" || msg.type === "emergency") {
           if (msg.type === "state") setState(msg.payload as DashState);
           if (msg.type === "emergency") {

@@ -4,7 +4,13 @@ import type { SightlineApp } from "../app.js";
 import { objectWithThumb } from "../app.js";
 import { config } from "../config.js";
 import { buildLinkInfo } from "../link/linkInfo.js";
-import { mongoStatus, recentPersistedEvents } from "../memory/db.js";
+import {
+  mongoStatus,
+  recentPersistedEvents,
+  recentTranscripts,
+  type TranscriptDirection,
+} from "../memory/db.js";
+import { speak } from "../voice/elevenlabs.js";
 
 export function createApiRouter(app: SightlineApp) {
   const router = express.Router();
@@ -22,6 +28,7 @@ export function createApiRouter(app: SightlineApp) {
       visionMode: config.visionMode,
       elevenlabs: Boolean(config.elevenLabsApiKey),
       mongo: mongoStatus(),
+      stt: app.transcriber.status(),
     });
   });
 
@@ -30,6 +37,47 @@ export function createApiRouter(app: SightlineApp) {
   router.get("/mongo/events", async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 25, 200);
     res.json({ status: mongoStatus(), events: await recentPersistedEvents(limit) });
+  });
+
+  // Speak an arbitrary line through ElevenLabs and push it to the dashboard.
+  // Lets us verify the whole voice path without faking a fall.
+  router.post("/voice/test", async (req, res) => {
+    const text =
+      typeof req.body?.text === "string" && req.body.text.trim()
+        ? String(req.body.text).slice(0, 400)
+        : "SIGHTLINE voice check. If you can hear this, the audio path is working.";
+    const voice = await speak(text);
+    app.emit("voice", voice);
+    res.json({
+      ...voice,
+      audioBytes: voice.audioBase64 ? Buffer.from(voice.audioBase64, "base64").length : 0,
+      audioBase64: undefined,
+    });
+  });
+
+  // Feed a WAV/MP3 straight to Scribe to prove the STT path without needing
+  // a wearable in the room: curl -F file=@clip.wav /api/stt/test
+  router.post("/stt/test", express.raw({ type: "*/*", limit: "25mb" }), async (req, res) => {
+    const body = req.body as Buffer | undefined;
+    if (!body || body.length < 100) {
+      res.status(400).json({ ok: false, error: "POST raw audio bytes as the body" });
+      return;
+    }
+    const result = await app.transcribeBuffer(body);
+    res.json(result);
+  });
+
+  // Full transcript log out of Atlas, newest first.
+  router.get("/mongo/transcripts", async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 50, 500);
+    const dir = req.query.direction;
+    const direction =
+      dir === "spoken" || dir === "asked" ? (dir as TranscriptDirection) : undefined;
+    res.json({
+      status: mongoStatus(),
+      direction: direction ?? "all",
+      transcripts: await recentTranscripts(limit, direction),
+    });
   });
 
   router.get("/link", async (_req, res) => {

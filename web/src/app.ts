@@ -5,6 +5,8 @@ import { MemoryStore } from "./memory/store.js";
 import { answerRecallQuery, toRecallMatch } from "./gemini/reasoner.js";
 import { listDemoAgents, verifyAgentAccess } from "./ans/trustGate.js";
 import { speak } from "./voice/elevenlabs.js";
+import { mirrorTranscript } from "./memory/db.js";
+import { SpeechTranscriber, callScribe, type Utterance } from "./voice/transcribe.js";
 import type {
   DashboardState,
   Detection,
@@ -26,6 +28,7 @@ import {
 export class SightlineApp extends EventEmitter {
   readonly relay = new RelayHub();
   readonly store = new MemoryStore();
+  readonly transcriber = new SpeechTranscriber();
 
   private visionService: VisionService;
   private emergencyService: EmergencyService;
@@ -33,6 +36,7 @@ export class SightlineApp extends EventEmitter {
   private policeService: PoliceService;
 
   private transcriptSnippet = "";
+  private micSpeaking = false;
   private mode = "STANDBY";
   private lastAccessRequest = null as DashboardState["lastAccessRequest"];
   private agentStates: DashboardState["agents"] = listDemoAgents();
@@ -132,6 +136,15 @@ export class SightlineApp extends EventEmitter {
         this.policeService.pushOfficerDown(payload);
       },
     );
+    // Wearable + phone mic audio arrives here. Until now nothing subscribed
+    // to it, so the microphone was a dead end.
+    this.relay.on("audio", (chunk) => this.transcriber.push(chunk));
+    this.transcriber.on("transcript", (u: Utterance) => void this.onHeard(u));
+    this.transcriber.on("listening", (l: { speaking: boolean }) => {
+      this.micSpeaking = l.speaking;
+      this.broadcast();
+    });
+
     this.emergencyService.on("voice", (voice) => this.emit("voice", voice));
 
     this.missionService.on("voice", (voice) => this.emit("voice", voice));
@@ -279,7 +292,57 @@ export class SightlineApp extends EventEmitter {
     return this.missionService.startTrackMission(targetQuery);
   }
 
+  /** Transcribe an uploaded audio file - used by /api/stt/test. */
+  async transcribeBuffer(bytes: Buffer) {
+    const r = await callScribe(bytes, "upload.wav", "audio/wav");
+    if (r.ok && r.text) {
+      await this.onHeard({
+        text: r.text,
+        source: "upload",
+        sessionId: this.relay.getSession()?.sessionId ?? "dashboard",
+        startedAtMs: Date.now(),
+        durationMs: 0,
+        latencyMs: r.latencyMs,
+        languageCode: r.languageCode,
+        confidence: r.confidence,
+      });
+    }
+    return r;
+  }
+
+  /** A transcribed utterance from the wearer's own microphone. */
+  private async onHeard(u: Utterance): Promise<void> {
+    this.transcriptSnippet = u.text;
+    mirrorTranscript({
+      direction: "heard",
+      text: u.text,
+      sessionId: u.sessionId,
+      source: u.source,
+      durationMs: u.durationMs,
+      latencyMs: u.latencyMs,
+      context: "wearable-mic",
+    });
+    this.store.addEvent({
+      type: "heard",
+      timestampMs: u.startedAtMs,
+      sessionId: u.sessionId,
+      severity: "info",
+      description: `Heard (${u.source}): "${u.text}"`,
+    });
+    this.emit("heard", u);
+    this.broadcast();
+
+    // Opt-in: let the wearer ask out loud instead of typing. Off by default so
+    // a stray sentence during the demo can't fire a recall nobody asked for.
+    if (config.sttAutoRecall && looksLikeRecallQuestion(u.text)) {
+      console.log(`[stt] auto-recall triggered by: "${u.text}"`);
+      await this.recall(u.text);
+    }
+  }
+
   async recall(query: string) {
+    const sessionId = this.relay.getSession()?.sessionId ?? "dashboard";
+    mirrorTranscript({ direction: "asked", text: query, sessionId, context: "recall" });
     const result = await answerRecallQuery(query, this.store);
     this.transcriptSnippet = query;
     if (!result.needsChoice && result.objectId) {
@@ -388,4 +451,11 @@ export function objectWithThumb(obj: MemoryObject) {
       ? Buffer.from(obj.lastFrameThumbJpeg).toString("base64")
       : null,
   };
+}
+
+/** Heuristic: is this spoken line a question SIGHTLINE should answer? */
+function looksLikeRecallQuestion(text: string): boolean {
+  const t = text.toLowerCase();
+  if (!/\b(where|did i|have i|find|locate|what did i)\b/.test(t)) return false;
+  return /\b(is|are|did|leave|left|put|see|saw|my)\b/.test(t);
 }

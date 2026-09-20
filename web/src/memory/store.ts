@@ -91,7 +91,32 @@ export class MemoryStore {
 
   listObjects(): MemoryObject[] { return Array.from(this.objects.values()).sort((a, b) => b.lastSeenAtMs - a.lastSeenAtMs); }
   getObject(id: string): MemoryObject | null { return this.objects.get(id) || null; }
-  searchObjects(query: string): MemoryObject[] { return this.listObjects(); } // Stub
+  /**
+   * Local recall search - the fallback when Atlas is unreachable, and the
+   * resolver for ids Atlas hands back. Ranks by how many of the query's words
+   * a card matches, prefers cards matching every word, and breaks ties by
+   * most-recently-seen so the newest thing is always at the top.
+   */
+  searchObjects(query: string): MemoryObject[] {
+    const tokens = tokenizeQuery(query);
+    if (tokens.length === 0) return this.listObjects();
+
+    const scored = this.listObjects()
+      .map((o) => {
+        const hay = `${o.displayName} ${o.canonicalLabel} ${o.descriptors.join(" ")}`.toLowerCase();
+        const hits = tokens.filter((t) => matchesWord(hay, t));
+        const complete = hits.length === tokens.length;
+        return { o, score: hits.length + (complete ? 10 : 0), complete };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score || b.o.lastSeenAtMs - a.o.lastSeenAtMs);
+
+    // A specific query ("black laptop") should not return the white one just
+    // because they are both laptops.
+    const complete = scored.filter((x) => x.complete);
+    const pool = complete.length > 0 ? complete : scored;
+    return pool.map((x) => x.o);
+  }
   listEvents(limit = 100): TimelineEvent[] { return [...this.events].sort((a, b) => b.timestampMs - a.timestampMs).slice(0, limit); }
   
   createMission(mission: any): Mission {
@@ -125,6 +150,27 @@ export function normalizeLabel(label: string): string {
   if (["backpack", "rucksack"].includes(l)) return "backpack";
   if (["handbag", "purse"].includes(l)) return "bag";
   return l.replace(/\s+/g, " ");
+}
+
+/**
+ * Match a token at a word boundary, not anywhere in the string. Plain
+ * `includes` made "where is it" match "white laptop" (the "it" inside
+ * "white"). Prefix matching is still allowed, so "lap" finds "laptop".
+ */
+function matchesWord(haystack: string, token: string): boolean {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}`, "i").test(haystack);
+}
+
+function tokenizeQuery(query: string): string[] {
+  return query
+    .toLowerCase()
+    .replace(/[?.,!'"]/g, " ")
+    .split(/\s+/)
+    .map((t) => (t === "iphone" || t === "smartphone" ? "phone" : t))
+    .map((t) => (t === "macbook" || t === "notebook" ? "laptop" : t))
+    .map((t) => (t === "gray" ? "grey" : t))
+    .filter((t) => t.length > 1 && !STOPWORDS.has(t));
 }
 
 function mergeDescriptors(a: string[], b: string[]): string[] { return unique([...a, ...b]).slice(0, 14); }

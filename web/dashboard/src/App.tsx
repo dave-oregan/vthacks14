@@ -9,6 +9,7 @@ import { LinkPanel } from "./components/LinkPanel";
 import { RecallPicker } from "./components/RecallPicker";
 import { EmergencyModal } from "./components/EmergencyModal";
 import { SideAlertStack } from "./components/SideAlertStack";
+import { VoiceIndicator } from "./components/VoiceIndicator";
 
 export function App() {
   const {
@@ -399,6 +400,8 @@ export function App() {
         alerts={state?.sideAlerts ?? []}
         onDismiss={(id) => void dismissSideAlert(id)}
       />
+
+      <VoiceIndicator />
 
       {picker && (
         <RecallPicker

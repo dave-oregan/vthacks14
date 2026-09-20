@@ -25,7 +25,7 @@ const DB_NAME = "sightline";
 let client: MongoClient | null = null;
 let db: Db | null = null;
 
-const counts = { events: 0, objects: 0, agents: 0, failures: 0 };
+const counts = { events: 0, objects: 0, agents: 0, transcripts: 0, failures: 0 };
 let lastError: string | null = null;
 let connectedAt: number | null = null;
 let restored = { objects: 0, events: 0 };
@@ -37,6 +37,7 @@ interface WithStringId {
 type EventDoc = WithStringId & Record<string, unknown>;
 type ObjectDoc = WithStringId & Record<string, unknown>;
 type AgentDoc = WithStringId & Record<string, unknown>;
+type TranscriptDoc = Record<string, unknown>;
 
 /** Strip credentials out of a mongodb+srv URI so we can log it safely. */
 function redactUri(uri: string): string {
@@ -80,6 +81,8 @@ export async function connectDatabases(): Promise<void> {
       db.collection("objects").createIndex({ lastSeenAtMs: -1 }),
       db.collection("objects").createIndex({ descriptors: 1 }),
       db.collection("agent_requests").createIndex({ timestampMs: -1 }),
+      db.collection("transcripts").createIndex({ timestampMs: -1 }),
+      db.collection("transcripts").createIndex({ direction: 1, timestampMs: -1 }),
     ]);
 
     console.log(`[db] MongoDB Atlas connected -> ${DB_NAME} @ ${redactUri(config.mongoUri)}`);
@@ -255,6 +258,177 @@ export async function loadPersistedState(): Promise<{
 
     restored = { objects: objects.length, events: restoredEvents.length };
     return { objects, events: restoredEvents };
+  } catch (err) {
+    note("events", err);
+    return null;
+  }
+}
+
+
+// ==========================================
+// Transcripts - everything said and everything asked
+// ==========================================
+
+export type TranscriptDirection = "spoken" | "asked" | "heard";
+
+/**
+ * Record a line of dialogue. "spoken" is SIGHTLINE talking (the ElevenLabs
+ * output), "asked" is a recall question typed into Mission Control, and
+ * "heard" is the wearer's own speech transcribed by Scribe. Fire-and-forget
+ * like the rest - a transcript write must never delay speech or an answer.
+ */
+export function mirrorTranscript(entry: {
+  direction: TranscriptDirection;
+  text: string;
+  ok?: boolean;
+  hadAudio?: boolean;
+  model?: string;
+  latencyMs?: number;
+  audioBytes?: number;
+  sessionId?: string | null;
+  context?: string;
+  error?: string | null;
+  source?: string;
+  durationMs?: number;
+}): void {
+  if (!db) return;
+  const now = Date.now();
+  void db
+    .collection<TranscriptDoc>("transcripts")
+    .insertOne({
+      direction: entry.direction,
+      text: entry.text,
+      ok: entry.ok ?? true,
+      hadAudio: Boolean(entry.hadAudio),
+      model: entry.model ?? null,
+      latencyMs: entry.latencyMs ?? null,
+      audioBytes: entry.audioBytes ?? 0,
+      sessionId: entry.sessionId ?? null,
+      context: entry.context ?? null,
+      error: entry.error ?? null,
+      source: entry.source ?? null,
+      durationMs: entry.durationMs ?? null,
+      timestampMs: now,
+      timestampIso: new Date(now).toISOString(),
+    })
+    .then(() => {
+      counts.transcripts += 1;
+    })
+    .catch((err) => note("transcripts", err));
+}
+
+/** Newest first, which is how the dashboard wants to render them. */
+export async function recentTranscripts(
+  limit = 50,
+  direction?: TranscriptDirection,
+): Promise<unknown[]> {
+  if (!db) return [];
+  try {
+    return await db
+      .collection("transcripts")
+      .find(direction ? { direction } : {})
+      .sort({ timestampMs: -1 })
+      .limit(limit)
+      .toArray();
+  } catch (err) {
+    note("transcripts", err);
+    return [];
+  }
+}
+
+// ==========================================
+// Recall, served by Atlas
+// ==========================================
+
+const RECALL_STOPWORDS = new Set([
+  "where","is","my","the","a","an","did","i","leave","find","last","seen","at",
+  "of","to","me","was","are","what","which","please","show","recall","locate",
+  "for","and","or","in","on","with","you","see","do","have","put","it",
+]);
+
+function escapeRegex(t: string): string {
+  return t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function recallTokens(query: string): string[] {
+  return query
+    .toLowerCase()
+    .replace(/[?.,!'"]/g, " ")
+    .split(/\s+/)
+    .map((t) => (t === "iphone" || t === "smartphone" ? "phone" : t))
+    .map((t) => (t === "macbook" || t === "notebook" ? "laptop" : t))
+    .map((t) => (t === "gray" ? "grey" : t))
+    .filter((t) => t.length > 1 && !RECALL_STOPWORDS.has(t));
+}
+
+export interface AtlasRecallHit {
+  id: string;
+  matchedTokens: number;
+  lastSeenAtMs: number;
+}
+
+/**
+ * Run the recall search inside Atlas rather than over the in-memory map.
+ *
+ * Returns ids only, ranked: objects matching more of the query's words first,
+ * then most-recently-seen first. The caller resolves each id against the live
+ * store so thumbnails (which we deliberately never upload) still appear.
+ *
+ * Returns null when Atlas is unavailable, which tells the caller to fall back
+ * to the local search rather than show the judge an error.
+ */
+export async function searchObjectsInAtlas(query: string): Promise<AtlasRecallHit[] | null> {
+  if (!db) return null;
+  const tokens = recallTokens(query);
+  try {
+    const coll = db.collection("objects");
+
+    // No usable words ("where is it?") -> just the timeline, newest first.
+    if (tokens.length === 0) {
+      const all = await coll.find({}).sort({ lastSeenAtMs: -1 }).limit(50).toArray();
+      return all.map((d) => ({
+        id: String(d._id),
+        matchedTokens: 0,
+        lastSeenAtMs: Number(d.lastSeenAtMs ?? 0),
+      }));
+    }
+
+    const ors = tokens.flatMap((t) => {
+      const rx = { $regex: `\\b${escapeRegex(t)}`, $options: "i" };
+      return [
+        { displayName: rx },
+        { canonicalLabel: rx },
+        { descriptors: rx },
+      ];
+    });
+
+    const docs = await coll
+      .find({ $or: ors })
+      .sort({ lastSeenAtMs: -1 })
+      .limit(60)
+      .toArray();
+
+    const hits = docs.map((d) => {
+      const hay = [
+        String(d.displayName ?? ""),
+        String(d.canonicalLabel ?? ""),
+        ...(Array.isArray(d.descriptors) ? (d.descriptors as string[]) : []),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return {
+        id: String(d._id),
+        matchedTokens: tokens.filter((t) => new RegExp(`\\b${escapeRegex(t)}`, "i").test(hay))
+          .length,
+        lastSeenAtMs: Number(d.lastSeenAtMs ?? 0),
+      };
+    });
+
+    // Prefer cards matching every word; among equals, most recent first.
+    const complete = hits.filter((h) => h.matchedTokens === tokens.length);
+    const pool = complete.length > 0 ? complete : hits;
+    pool.sort((a, b) => b.matchedTokens - a.matchedTokens || b.lastSeenAtMs - a.lastSeenAtMs);
+    return pool;
   } catch (err) {
     note("events", err);
     return null;

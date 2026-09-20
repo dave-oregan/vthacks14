@@ -63,7 +63,8 @@ export interface TimelineEvent {
     | "stream_event"
     | "possible_emergency"
     | "mission_started"
-    | "alerted";
+    | "alerted"
+    | "heard";
   timestampMs: number;
   sessionId?: string;
   missionId?: string;
