@@ -64,5 +64,4 @@ export const config = {
 
   // Database (Stretch)
   mongoUri: process.env.MONGO_URI ?? "",
-  tigerDataUri: process.env.TIGER_DATA_URI ?? "",
 };

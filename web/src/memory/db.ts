@@ -98,9 +98,6 @@ export async function connectDatabases(): Promise<void> {
     db = null;
   }
 
-  if (config.tigerDataUri) {
-    console.log("[db] TIGER_DATA_URI present (time-series store not wired in this build)");
-  }
 }
 
 function note(kind: keyof typeof counts, err: unknown): void {
