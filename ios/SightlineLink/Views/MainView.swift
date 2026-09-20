@@ -88,6 +88,11 @@ struct MainView: View {
 
                     Button {
                         coordinator.enableAutoRayBanMode()
+                        if coordinator.isRelaying {
+                            Task {
+                                await coordinator.retryPreferredVideo()
+                            }
+                        }
                     } label: {
                         Text("Auto / Ray-Ban")
                             .frame(maxWidth: .infinity)
@@ -124,6 +129,9 @@ struct MainView: View {
                     coordinator.settings.audioInputMode = .iphone
                 }
                 coordinator.saveSettings()
+                if coordinator.isRelaying {
+                    Task { await coordinator.retryPreferredVideo() }
+                }
             }
 
             Picker("Audio Input", selection: $coordinator.settings.audioInputMode) {

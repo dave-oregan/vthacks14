@@ -14,21 +14,26 @@ final class MetaWearablesService: ObservableObject {
     @Published private(set) var configureError: String?
     @Published private(set) var hasActiveDevice = false
     @Published private(set) var sessionStateText = "idle"
+    @Published private(set) var cameraStateText = "idle"
     @Published private(set) var streamStateText = "stopped"
     @Published private(set) var cameraPermissionGranted = false
     @Published private(set) var isStreaming = false
     @Published private(set) var previewImage: UIImage?
     @Published private(set) var lastError: String?
     @Published private(set) var framesReceived: UInt64 = 0
+    @Published private(set) var lastFrameTimestamp: Date?
 
     private var wearables: WearablesInterface?
     private var deviceSelector: AutoDeviceSelector?
     private var deviceSession: DeviceSession?
     private var camera: MWDATCamera.Camera?
+    private var stream: MWDATCamera.Stream?
     private var registrationTask: Task<Void, Never>?
     private var deviceMonitorTask: Task<Void, Never>?
     private let sessionTokenBag = ListenerTokenBag()
     private let streamTokenBag = ListenerTokenBag()
+    private var didRequestStream = false
+    private var didLogFirstFrame = false
 
     private var onFrame: ((UIImage, Int, Int) -> Void)?
     private var onSessionEvent: ((String) -> Void)?
@@ -136,10 +141,16 @@ final class MetaWearablesService: ObservableObject {
         }
     }
 
-    func startSessionAndStream() async {
+    /// Official DAT 0.9 sequence: createSession → start() → await .started →
+    /// addCamera → subscribe to stream publishers → stream.start().
+    /// Returns true once the camera is attached and `stream.start()` was issued;
+    /// false means the session genuinely failed (callers may fall back).
+    @discardableResult
+    func startSessionAndStream() async -> Bool {
         guard let wearables, let deviceSelector else {
             lastError = "Wearables SDK not configured"
-            return
+            AppLog.error("startSessionAndStream: Wearables SDK not configured")
+            return false
         }
 
         await refreshCameraPermission()
@@ -147,50 +158,70 @@ final class MetaWearablesService: ObservableObject {
             let granted = await requestCameraPermission()
             guard granted else {
                 lastError = "Ray-Ban camera permission denied"
+                AppLog.error("Ray-Ban camera permission denied")
                 onSessionEvent?("camera_permission_denied")
-                return
+                return false
             }
         }
+
+        for id in wearables.devices {
+            if let device = wearables.deviceForIdentifier(id) {
+                AppLog.info("Device \(device.nameOrId()): link=\(device.linkState) compat=\(device.compatibility()) type=\(device.deviceType().rawValue)")
+            }
+        }
+        AppLog.info("Active device: \(deviceSelector.activeDevice ?? "none")")
 
         if deviceSession == nil {
             do throws(DeviceSessionError) {
                 let session = try wearables.createSession(deviceSelector: deviceSelector)
                 deviceSession = session
                 observeSession(session)
-                try session.start()
+                AppLog.info("DeviceSession created (deviceId=\(session.deviceId))")
                 sessionStateText = "starting"
+                AppLog.info("DeviceSession starting…")
+                try session.start()
             } catch {
                 lastError = error.localizedDescription
+                AppLog.error("DeviceSession create/start failed: \(error.localizedDescription)")
                 onSessionEvent?("rayban_session_failed")
-                AppLog.error("DeviceSession failed: \(error.localizedDescription)")
-                return
+                deviceSession = nil
+                sessionStateText = "idle"
+                return false
             }
         }
 
-        for _ in 0..<40 {
-            if deviceSession?.state == .started { break }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
+        guard let session = deviceSession else { return false }
 
-        guard let session = deviceSession, session.state == .started else {
-            lastError = "Wearable session did not start — is a device connected?"
-            return
+        if session.state != .started {
+            let started = await waitForSessionStart(session)
+            guard started else {
+                lastError = "Wearable session did not reach .started"
+                AppLog.error("DeviceSession did not start (state=\(session.state))")
+                onSessionEvent?("rayban_session_failed")
+                return false
+            }
         }
+        AppLog.info("DeviceSession started")
 
-        beginStream(on: session)
+        return beginStream(on: session)
     }
 
     func stopStreamAndSession() {
+        AppLog.info("Stopping DAT stream/session")
+        didRequestStream = false
         streamTokenBag.clear()
         camera?.stop()
         camera = nil
+        stream = nil
         deviceSession?.stop()
         deviceSession = nil
         sessionTokenBag.clear()
         isStreaming = false
         streamStateText = "stopped"
+        cameraStateText = "stopped"
         sessionStateText = "idle"
         previewImage = nil
+        lastFrameTimestamp = nil
     }
 
     // MARK: - Private
@@ -235,12 +266,42 @@ final class MetaWearablesService: ObservableObject {
         }
     }
 
+    /// Await `.started` via `stateStream()` (official sample pattern), with a
+    /// state-polling deadline so a stuck session fails instead of hanging.
+    private func waitForSessionStart(_ session: DeviceSession) async -> Bool {
+        if session.state == .started { return true }
+        return await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await state in session.stateStream() {
+                    if state == .started { return true }
+                    if state == .stopped { return false }
+                }
+                return session.state == .started
+            }
+            group.addTask {
+                for _ in 0..<80 {
+                    if session.state == .started { return true }
+                    if session.state == .stopped { return false }
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                }
+                return session.state == .started
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+    }
+
     private func observeSession(_ session: DeviceSession) {
+        sessionStateText = String(describing: session.state)
         session.statePublisher.listen { [weak self] state in
             Task { @MainActor in
-                self?.sessionStateText = String(describing: state)
+                guard let self else { return }
+                self.sessionStateText = String(describing: state)
+                AppLog.info("DeviceSession state → \(state)")
                 if state == .stopped {
-                    self?.cleanupSession()
+                    AppLog.info("DeviceSession stopped — cleaning up")
+                    self.cleanupSession()
                 }
             }
         }.store(in: sessionTokenBag)
@@ -253,54 +314,96 @@ final class MetaWearablesService: ObservableObject {
         }.store(in: sessionTokenBag)
     }
 
-    private func beginStream(on session: DeviceSession) {
-        guard camera == nil else { return }
+    private func observeCamera(_ camera: MWDATCamera.Camera) {
+        cameraStateText = String(describing: camera.state)
+        camera.statePublisher.listen { [weak self] state in
+            Task { @MainActor in
+                self?.cameraStateText = String(describing: state)
+                AppLog.info("Camera state → \(state)")
+            }
+        }.store(in: streamTokenBag)
+    }
 
+    private func beginStream(on session: DeviceSession) -> Bool {
+        guard camera == nil else { return true }
+
+        // Conservative initial config per DAT docs (valid fps: 2/7/15/24/30).
         let config = StreamConfiguration(
             videoCodec: .raw,
             resolution: .low,
-            frameRate: 24
+            frameRate: 15
         )
 
-        do {
+        do throws(DeviceSessionError) {
             guard let newCamera = try session.addCamera(config: config) else {
-                lastError = "Could not create wearable camera"
-                return
+                lastError = "addCamera returned nil"
+                AppLog.error("addCamera failed: returned nil")
+                return false
             }
             camera = newCamera
+            AppLog.info("addCamera success — camera attached")
+            observeCamera(newCamera)
             setupStreamListeners(for: newCamera.stream)
-            streamStateText = "starting"
+            framesReceived = 0
+            lastFrameTimestamp = nil
+            didLogFirstFrame = false
+            didRequestStream = true
+            AppLog.info("Stream start requested (codec=raw resolution=low fps=15)")
             newCamera.stream.start()
-            onSessionEvent?("video_started")
+            return true
         } catch {
             camera = nil
             lastError = error.localizedDescription
             AppLog.error("addCamera failed: \(error.localizedDescription)")
+            return false
         }
     }
 
     private func setupStreamListeners(for stream: MWDATCamera.Stream) {
+        self.stream = stream
+        streamStateText = String(describing: stream.state)
+
         stream.statePublisher.listen { [weak self] state in
             Task { @MainActor in
-                self?.streamStateText = String(describing: state)
-                self?.isStreaming = (state == .streaming)
-                if state == .stopped {
-                    self?.clearStreamResources()
+                guard let self else { return }
+                self.streamStateText = String(describing: state)
+                self.isStreaming = (state == .streaming)
+                AppLog.info("Stream state → \(state)")
+                switch state {
+                case .streaming:
+                    self.onSessionEvent?("video_started")
+                case .stopped:
+                    let unexpected = self.didRequestStream
+                    self.clearStreamResources()
+                    if unexpected {
+                        AppLog.error("Stream stopped unexpectedly")
+                        self.onSessionEvent?("rayban_stream_failed")
+                    }
+                default:
+                    break
                 }
             }
         }.store(in: streamTokenBag)
 
         stream.videoFramePublisher.listen { [weak self] frame in
-            guard let self else { return }
             guard let image = frame.makeUIImage() else { return }
             let width = Int(image.size.width * image.scale)
             let height = Int(image.size.height * image.scale)
 
             Task { @MainActor in
+                guard let self else { return }
                 self.framesReceived &+= 1
+                let now = Date()
+                self.lastFrameTimestamp = now
                 self.previewImage = image
 
-                let now = Date()
+                if !self.didLogFirstFrame {
+                    self.didLogFirstFrame = true
+                    AppLog.info("First Ray-Ban frame received (\(width)x\(height))")
+                } else if self.framesReceived % 30 == 0 {
+                    AppLog.info("Ray-Ban frames received: \(self.framesReceived)")
+                }
+
                 if let last = self.lastRelayDate, now.timeIntervalSince(last) < self.relayInterval {
                     return
                 }
@@ -311,16 +414,22 @@ final class MetaWearablesService: ObservableObject {
 
         stream.errorPublisher.listen { [weak self] error in
             Task { @MainActor in
-                self?.lastError = error.localizedDescription
-                AppLog.warn("Stream error: \(error.localizedDescription)")
+                guard let self else { return }
+                self.lastError = error.localizedDescription
+                AppLog.error("Stream error: \(error.localizedDescription)")
+                if error != .photoCaptureFailed {
+                    self.onSessionEvent?("rayban_stream_failed")
+                }
             }
         }.store(in: streamTokenBag)
     }
 
     private func clearStreamResources() {
+        didRequestStream = false
         streamTokenBag.clear()
         camera?.stop()
         camera = nil
+        stream = nil
         isStreaming = false
         streamStateText = "stopped"
     }
