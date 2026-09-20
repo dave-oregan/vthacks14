@@ -71,6 +71,7 @@ export type DashState = {
     largeGroup: boolean;
     hostility: number;
     hostilityLabel: string;
+    dangerTicks?: number;
   };
   session: {
     connected: boolean;

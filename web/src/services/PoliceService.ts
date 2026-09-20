@@ -12,6 +12,10 @@ const HOSTILE_RE =
 
 /** People count at/above this = large group. */
 const LARGE_GROUP_MIN = 5;
+/** Danger meter level that counts as an elevated "tick". */
+const DANGER_TICK_MIN = 30;
+/** Consecutive elevated scans before auto backup alert. */
+const BACKUP_AFTER_DANGER_TICKS = 2;
 /** Cooldown so the same threat/plate doesn't spam the stack. */
 const ALERT_COOLDOWN_MS = 12_000;
 
@@ -26,6 +30,8 @@ export type PoliceStatus = {
   largeGroup: boolean;
   hostility: number; // 0..100
   hostilityLabel: string;
+  /** Consecutive elevated danger scans (resets when clear). */
+  dangerTicks: number;
 };
 
 export class PoliceService extends EventEmitter {
@@ -43,6 +49,8 @@ export class PoliceService extends EventEmitter {
   private largeGroup = false;
   private hostility = 0;
   private hostilityLabel = "Calm";
+  private lastThreatAtMs = 0;
+  private dangerTicks = 0;
 
   constructor(private store: MemoryStore) {
     super();
@@ -80,11 +88,14 @@ export class PoliceService extends EventEmitter {
       topThreat: this.topThreat,
       topConfidence: this.topConfidence,
       backupThreshold: this.backupThreshold,
-      backupArmed: this.topConfidence >= this.backupThreshold && this.dangerLevel >= 40,
+      backupArmed:
+        this.dangerTicks >= BACKUP_AFTER_DANGER_TICKS ||
+        (this.topConfidence >= this.backupThreshold && this.dangerLevel >= 40),
       groupCount: this.groupCount,
       largeGroup: this.largeGroup,
       hostility: this.hostility,
       hostilityLabel: this.hostilityLabel,
+      dangerTicks: this.dangerTicks,
     };
   }
 
@@ -119,13 +130,17 @@ export class PoliceService extends EventEmitter {
   ingestCrowdHint(people: Detection[]): void {
     if (!this.enabled) return;
     const count = countDistinctPeople(people.filter((d) => PERSON_RE.test(nameOf(d))));
-    if (count === 0 && this.groupCount === 0) return;
-    // Prefer the higher of LA vs browser people counts for the frame.
-    this.groupCount = Math.max(this.groupCount, count);
+    this.groupCount = count;
     this.largeGroup = this.groupCount >= LARGE_GROUP_MIN;
     if (this.largeGroup && this.dangerLabel === "Clear") this.dangerLabel = "Monitor";
     if (this.largeGroup) {
-      this.dangerLevel = Math.max(this.dangerLevel, 28 + Math.min(20, (this.groupCount - LARGE_GROUP_MIN) * 3));
+      this.dangerLevel = Math.max(
+        this.dangerLevel,
+        28 + Math.min(20, (this.groupCount - LARGE_GROUP_MIN) * 3),
+      );
+    } else if (count === 0) {
+      // Camera moved away from the crowd — don't keep a stuck group assessment.
+      this.largeGroup = false;
     }
     this.emit("status", this.getStatus());
   }
@@ -147,7 +162,19 @@ export class PoliceService extends EventEmitter {
     const people = detections.filter((d) => PERSON_RE.test(nameOf(d)));
     const hostileCues = detections.filter((d) => HOSTILE_RE.test(nameOf(d)));
 
+    // Empty / cleared scan — reset assessments so they don't stick after the camera turns.
+    if (detections.length === 0) {
+      this.resetMeter();
+      this.emit("status", this.getStatus());
+      return;
+    }
+
+    if (weapons.length || hostileCues.length) {
+      this.lastThreatAtMs = Date.now();
+    }
+
     this.updateDangerMeter(weapons, plates, people, hostileCues);
+    this.advanceDangerTicks(location, sessionId);
     this.emit("status", this.getStatus());
 
     for (const w of weapons) {
@@ -316,6 +343,48 @@ export class PoliceService extends EventEmitter {
     this.largeGroup = false;
     this.hostility = 0;
     this.hostilityLabel = "Calm";
+    this.lastThreatAtMs = 0;
+    this.dangerTicks = 0;
+  }
+
+  /**
+   * Each elevated scan counts as a tick. Two consecutive ticks → backup alert.
+   * A clear scan resets the streak.
+   */
+  private advanceDangerTicks(
+    location: GeoPoint | null,
+    sessionId: string,
+  ): void {
+    if (this.dangerLevel >= DANGER_TICK_MIN) {
+      this.dangerTicks += 1;
+    } else {
+      this.dangerTicks = 0;
+      return;
+    }
+
+    if (this.dangerTicks < BACKUP_AFTER_DANGER_TICKS) return;
+    if (!this.canFire("backup:danger-ticks")) return;
+
+    this.pushAlert({
+      kind: "backup_recommend",
+      severity: "critical",
+      title: "Request backup",
+      message:
+        `Danger held for ${this.dangerTicks} scans ` +
+        `(${this.dangerLabel} · ${this.dangerLevel}` +
+        (this.topThreat ? ` · ${this.topThreat}` : "") +
+        `). DEMO: would call backup — no real dispatch.`,
+      ttlMs: 20_000,
+      location,
+    });
+    this.store.addEvent({
+      type: "alerted",
+      timestampMs: Date.now(),
+      sessionId,
+      severity: "critical",
+      description: `Police mode: backup after ${this.dangerTicks} danger ticks`,
+      location,
+    });
   }
 
   private updateDangerMeter(

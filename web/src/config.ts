@@ -35,7 +35,7 @@ export const config = {
    * Default off — LA empty should not pay COCO load cost or muddy the demo.
    */
   cocoFallback: ["1", "true", "yes", "on"].includes(
-    String(process.env.COCO_FALLBACK ?? "false").toLowerCase(),
+    String(process.env.COCO_FALLBACK ?? "true").toLowerCase(),
   ),
   leaveBehindMeters: Number(process.env.LEAVE_BEHIND_METERS ?? 12),
   leaveBehindAbsentMs: Number(process.env.LEAVE_BEHIND_ABSENT_MS ?? 8000),

@@ -190,5 +190,6 @@ export interface DashboardState {
     largeGroup: boolean;
     hostility: number;
     hostilityLabel: string;
+    dangerTicks: number;
   };
 }

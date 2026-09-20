@@ -41,8 +41,6 @@ export function App() {
 
   const overlayDetections = useMemo(() => {
     const server = state?.latestDetections ?? [];
-    const POLICE_KEEP =
-      /\b(gun|handgun|pistol|rifle|firearm|weapon|knife|blade|machete|person|people|crowd|fist|fight|punch|hostile|license\s*plate|number\s*plate|plate)\b/i;
 
     if (!policeMode) {
       if (!visionReady) return server;
@@ -59,13 +57,13 @@ export function App() {
       });
     }
 
-    // Police POV: ignore non-weapons / clutter — people, weapons, hostility cues, plates only.
+    // Police POV: live browser people + server threats only (no clutter / no stuck boxes).
     const fromBrowser = browserDets.filter((d) =>
-      POLICE_KEEP.test(`${d.label} ${d.displayName ?? ""}`),
+      /\b(person|people|crowd)\b/i.test(`${d.label} ${d.displayName ?? ""}`),
     );
-    const fromServer = server.filter((d) =>
-      POLICE_KEEP.test(`${d.label} ${d.displayName ?? ""}`),
-    );
+    const threatRe =
+      /\b(gun|handgun|pistol|rifle|firearm|weapon|knife|blade|machete|fist|fight|punch|hostile|license\s*plate|number\s*plate|plate)\b/i;
+    const fromServer = server.filter((d) => threatRe.test(`${d.label} ${d.displayName ?? ""}`));
     const merged = [...fromBrowser];
     for (const s of fromServer) {
       const dup = merged.some(
@@ -240,8 +238,10 @@ export function App() {
                     {" · "}
                     Hostility {police?.hostilityLabel ?? "Calm"}
                     {typeof police?.hostility === "number" ? ` ${police.hostility}` : ""}
+                    {" · "}
+                    Ticks {police?.dangerTicks ?? 0}/2
                   </span>
-                  {police?.backupArmed && (
+                  {(police?.backupArmed || (police?.dangerTicks ?? 0) >= 2) && (
                     <span className="danger-meter-armed">BACKUP ARMED</span>
                   )}
                 </div>

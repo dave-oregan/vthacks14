@@ -43,6 +43,8 @@ export class VisionService extends EventEmitter {
   private previewBusy = false;
   private lastLocateAnythingAt = 0;
   private allowCocoFallback: () => boolean;
+  /** When current boxes were last produced by a fresh detector pass. */
+  private detectionsAtMs = 0;
 
   constructor(
     private relay: RelayHub,
@@ -58,6 +60,10 @@ export class VisionService extends EventEmitter {
   getLatestDetections() {
     return this.latestDetections;
   }
+
+  getDetectionsAtMs() {
+    return this.detectionsAtMs;
+  }
   
   getLatestPreviewJpeg() {
     return this.latestPreviewJpeg;
@@ -69,6 +75,7 @@ export class VisionService extends EventEmitter {
 
   reset() {
     this.latestDetections = [];
+    this.detectionsAtMs = 0;
     this.latestPreviewJpeg = null;
     this.latestFrameJpeg = null;
     this.frameCounter = 0;
@@ -150,10 +157,10 @@ export class VisionService extends EventEmitter {
           detector = "coco";
         } else {
           console.warn(
-            `[vision] LocateAnything returned 0 after ${laMs}ms — keeping prior boxes (COCO fallback OFF)`,
+            `[vision] LocateAnything returned 0 after ${laMs}ms — clearing boxes (COCO fallback OFF)`,
           );
-          detections = this.latestDetections;
-          detector = "none";
+          detections = [];
+          detector = "locateanything"; // treat as fresh empty so we clear stale boxes
         }
       } else if (cocoOk || config.visionMode === "server" || config.visionMode === "both") {
         detections = await detectObjects(frame.jpeg);
@@ -164,7 +171,7 @@ export class VisionService extends EventEmitter {
         this.lastDetector = detector;
       }
       console.log(
-        `[vision] detector=${(detector === "none" ? "HOLD" : detector).toUpperCase()} ` +
+        `[vision] detector=${detector.toUpperCase()} ` +
           `objects=${detections.length} total=${Date.now() - visionStart}ms` +
           (hasLocateAnything() ? ` locateAnything=${laMs}ms` : "") +
           (hasLocateAnything() && !cocoOk ? " cocoFallback=off" : ""),
@@ -180,8 +187,11 @@ export class VisionService extends EventEmitter {
         return;
       }
 
-      detections = await describeDetectionsLocally(frame.jpeg, detections);
+      if (detections.length > 0) {
+        detections = await describeDetectionsLocally(frame.jpeg, detections);
+      }
       this.latestDetections = detections;
+      this.detectionsAtMs = Date.now();
       this.relay.markVisioned();
 
       this.geminiCounter += 1;
