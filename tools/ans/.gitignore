@@ -1,0 +1,7 @@
+# Private keys and issued certificates - never commit these.
+certs/
+*.key
+*.csr
+*.pem
+# 8MB vendored binary; re-download from the ANS releases page if needed.
+ans-cli.exe

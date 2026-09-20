@@ -1,8 +1,8 @@
 import { sendEmergencySms } from "./twilio.js";
 import { verifyAnsIdentity } from "../ans/godaddy.js";
+import { resolveAnsName } from "../ans/dns.js";
 import { config } from "../config.js";
 
-import dns from "node:dns/promises";
 
 // Keep track of recent evaluations to prevent spamming
 let lastAlertTimestamp = 0;
@@ -19,21 +19,28 @@ export interface VisionContext {
   hasPeople: boolean;
 }
 
-async function discoverMemoryEndpoint(): Promise<string> {
-  const memoryDomain = `v1.0.0.memory.${config.ansTeamDomain}`;
+/**
+ * Discover the Memory agent's endpoint from its published ANS record.
+ *
+ * This is the "discover" verb: the URL is not hardcoded, it is read from the
+ * _ans TXT record that Memory published in DNS at registration time. Falls
+ * back to loopback so the demo still runs before the domain is registered —
+ * and says which path it took, rather than pretending it resolved.
+ */
+async function discoverMemoryEndpoint(): Promise<{ url: string; viaAns: boolean }> {
+  const loopback = `http://127.0.0.1:${config.port}`;
   try {
-    // Attempt to resolve TXT record to simulate DNS-based discovery
-    const records = await dns.resolveTxt(memoryDomain);
-    for (const chunk of records) {
-      const txt = chunk.join("");
-      if (txt.startsWith("endpoint=")) return txt.split("=")[1];
+    const record = await resolveAnsName(`ans://memory.${config.ansTeamDomain}`);
+    const endpoint = record.endpoints.find((e) => e.url);
+    if (endpoint?.url) {
+      console.log(`[GUARDIAN] Discovered Memory via _ans.${record.host} -> ${endpoint.url}`);
+      return { url: endpoint.url, viaAns: true };
     }
+    console.log(`[GUARDIAN] No _ans record for memory.${config.ansTeamDomain}; using loopback`);
   } catch (err) {
-    // mock dns for local testing
-    console.log(`[DNS] Simulated resolution for ${memoryDomain}`);
-    return `http://127.0.0.1:${config.port}`;
+    console.log(`[GUARDIAN] ANS discovery failed (${err instanceof Error ? err.message : err}); using loopback`);
   }
-  return `http://127.0.0.1:${config.port}`;
+  return { url: loopback, viaAns: false };
 }
 
 /**
@@ -59,11 +66,19 @@ export async function evaluateRisk(
   console.log(`[GUARDIAN] High impact detected (score: ${motion.impactScore}). Evaluating risk...`);
 
   // Guardian discovers Memory via DNS
-  const memoryEndpoint = await discoverMemoryEndpoint();
-  console.log(`[GUARDIAN] Discovered Memory service at ${memoryEndpoint}`);
+  const discovery = await discoverMemoryEndpoint();
+  const memoryEndpoint = discovery.url;
+
+  // Guardian verifies its own ANS identity and scope BEFORE asking for data.
+  const GUARDIAN_SCOPES = ["telemetry.fall", "memory.frame", "location.coarse"];
+  const ansResult = await verifyAnsIdentity(agentAnsName, GUARDIAN_SCOPES);
+  console.log(`[GUARDIAN] ANS ${agentAnsName} -> ${ansResult.status}`);
+  for (const c of ansResult.checks) {
+    console.log(`  ${c.passed ? "PASS" : "FAIL"}  ${c.name.padEnd(14)} ${c.detail ?? ""}`);
+  }
 
   // Guardian calls Memory's endpoint over HTTP, presenting its own identity
-  let isAnsVerified = false;
+  let isAnsVerified = ansResult.isFullyVerified;
   let memoryContext = null;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 2000);
@@ -78,7 +93,6 @@ export async function evaluateRisk(
     clearTimeout(timeoutId);
 
     if (contextRes.ok) {
-      isAnsVerified = true;
       memoryContext = await contextRes.json();
       console.log(`[GUARDIAN] Memory verified identity and released context.`);
     } else {
@@ -105,8 +119,9 @@ export async function evaluateRisk(
   console.log("🚨 " + message);
   console.log("==================================================\n");
 
-  // Send the Twilio approved trial template so the phone actually buzzes
-  const sent = await sendEmergencySms("sms_internal_alerts");
+  // Send the alert we just built. Labelled SIMULATION: this is a hackathon
+  // demo escalating to a teammate's phone, never an emergency service.
+  const sent = await sendEmergencySms(`SIMULATION - ${message}`);
   
   if (sent) {
     lastAlertTimestamp = Date.now();

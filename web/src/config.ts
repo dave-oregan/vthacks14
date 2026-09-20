@@ -58,7 +58,9 @@ export const config = {
   twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ?? "",
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ?? "",
   twilioFromNumber: process.env.TWILIO_FROM_NUMBER ?? "",
-  twilioToNumber: process.env.TWILIO_TO_NUMBER ?? "2023392791", // User's test number
+  // No default: a real number must never be hardcoded in a public repo.
+  // Set TWILIO_TO_NUMBER in .env to a TEAMMATE's phone for the demo.
+  twilioToNumber: process.env.TWILIO_TO_NUMBER ?? "",
 
   // Database (Stretch)
   mongoUri: process.env.MONGO_URI ?? "",

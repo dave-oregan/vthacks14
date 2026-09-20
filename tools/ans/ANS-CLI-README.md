@@ -1,0 +1,568 @@
+# ANS CLI - Agent Name Service Command Line Tool
+
+A command-line tool for interacting with the Agent Name Service (ANS). Use this tool to register agents, verify domain ownership, and search for registered agents.
+
+## Installation
+
+Five install options, in recommended order:
+
+### Install with Homebrew (macOS / Linux)
+
+```bash
+brew install agentnameservice/ans/ans-cli
+```
+
+This auto-taps <https://github.com/agentnameservice/homebrew-ans> the first time you reference it. To upgrade later: `brew upgrade ans-cli`.
+
+### Install with Scoop (Windows)
+
+```powershell
+scoop bucket add ans https://github.com/agentnameservice/scoop-ans
+scoop install ans/ans-cli
+```
+
+To upgrade later: `scoop update ans-cli`.
+
+### Download a release binary
+
+Prebuilt binaries for linux, macOS, and Windows are published with each release.
+
+- Browse releases: <https://github.com/agentnameservice/ans-sdk-go/releases/latest>
+- Archive name pattern: `ans-cli_<version>_<os>_<arch>.tar.gz` (linux/darwin) or `ans-cli_<version>_windows_<arch>.zip`
+- Supported targets: `linux_amd64`, `linux_arm64`, `darwin_amd64`, `darwin_arm64`, `windows_amd64`, `windows_arm64`
+
+In the snippets below, replace `<version>` with the latest release tag from <https://github.com/agentnameservice/ans-sdk-go/releases/latest> (e.g., `0.1.10`). The leading `v` is part of the tag (`v0.1.10`) but **not** part of the archive filenames.
+
+#### macOS / Linux one-liner
+
+```bash
+VERSION=<version>   # e.g. 0.1.10 — look up at https://github.com/agentnameservice/ans-sdk-go/releases/latest
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+curl -L "https://github.com/agentnameservice/ans-sdk-go/releases/download/v${VERSION}/ans-cli_${VERSION}_${OS}_${ARCH}.tar.gz" \
+  | tar -xz ans-cli
+sudo mv ans-cli /usr/local/bin/
+ans-cli --version
+```
+
+#### Windows (amd64 + arm64)
+
+Most Windows users will prefer the Scoop install above. If you want the raw archive:
+
+1. Download the appropriate zip for your architecture from the [latest release](https://github.com/agentnameservice/ans-sdk-go/releases/latest):
+   - amd64 (most PCs): `ans-cli_<version>_windows_amd64.zip`
+   - arm64 (Surface Pro X, Snapdragon X laptops, Windows VMs on Apple Silicon): `ans-cli_<version>_windows_arm64.zip`
+2. Extract `ans-cli.exe` to a directory on your `%PATH%` (e.g., `C:\Tools\ans-cli\`).
+3. Verify: `ans-cli.exe --version`
+
+#### Verify the download against `checksums.txt`
+
+Each release ships a `checksums.txt` of SHA-256 hashes. Download it alongside the archive, then:
+
+- macOS: `shasum -a 256 -c checksums.txt --ignore-missing`
+- Linux: `sha256sum -c checksums.txt --ignore-missing`
+- Windows (PowerShell): `Get-FileHash -Algorithm SHA256 ans-cli_<version>_windows_<arch>.zip` and compare the hash against the corresponding line in `checksums.txt`.
+
+### Install with `go install`
+
+If you have Go 1.25 or newer:
+
+```bash
+# Track the latest tag
+go install github.com/agentnameservice/ans-sdk-go/cmd/ans-cli@latest
+
+# Or pin to a specific release (recommended for reproducible installs).
+# Replace <version> with a tag from https://github.com/agentnameservice/ans-sdk-go/releases — include the leading `v`.
+go install github.com/agentnameservice/ans-sdk-go/cmd/ans-cli@v<version>
+```
+
+The binary lands in `$(go env GOBIN)`, falling back to `$(go env GOPATH)/bin`. Make sure that directory is on your `PATH`.
+
+> **Heads up:** `go install` does not embed the version metadata that GoReleaser injects, so `ans-cli --version` will report the in-source defaults (`version: dev`, `commit: none`, `date: unknown`). Download a release archive if you need accurate build provenance.
+
+### Build from source
+
+For contributors and local testing:
+
+```bash
+cd cmd/ans-cli
+go build -o ans-cli .
+./ans-cli --version
+```
+
+The binary is written to the current directory.
+
+## Configuration
+
+The CLI can be configured using environment variables or command-line flags:
+
+| Environment Variable | Flag | Description | Default |
+|---------------------|------|-------------|---------|
+| `ANS_API_KEY` | `--api-key` | API key for authentication | (required unless `ANS_OAUTH_TOKEN` is set) |
+| `ANS_OAUTH_TOKEN` | `--oauth-token` | OAuth 2.0 bearer token; takes precedence over the API key | (unset) |
+| `ANS_BASE_URL` | `--base-url` | API base URL | `https://api.ote-godaddy.com` |
+| N/A | `--verbose` / `-v` | Enable verbose output | `false` |
+| N/A | `--json` / `-j` | Output in JSON format | `false` |
+
+Prefer the environment variables over the `--api-key`/`--oauth-token` flags — command-line arguments are visible to other local processes (`ps`) and are saved in shell history. When both credentials are configured, the CLI prints a note to stderr saying the OAuth token is being used.
+
+OAuth access tokens expire; for long-lived automation and `events --follow`, prefer `ANS_API_KEY` or refresh the token before each invocation.
+
+## Commands
+
+### generate-csr
+
+Generate key pairs and Certificate Signing Requests (CSRs) for identity and server certificates. By default the identity CSR uses an EC P-256 key and the server CSR an RSA-2048 key, which is what the GoDaddy-operated ANS registry accepts (RSA 2048, 3072, or 4096 bits or EC P-256 for identity; RSA 2048 or 4096 for server). Pass `--key-type rsa` or `--key-type ec` to force one algorithm for both CSRs, and `--csr-type` to generate only one of them. A key the registry would reject for a CSR type (for example `--key-size 3072` or `--key-type ec` together with a server CSR) is refused before anything is written; the error names the accepted keys.
+
+```bash
+ans-cli generate-csr \
+  --host myagent.example.com \
+  --org "Example Corp" \
+  --version 1.0.0 \
+  --country US \
+  --out-dir ./certs
+```
+
+Identity CSR only (for example to renew an identity certificate with `submit-identity-csr`):
+
+```bash
+ans-cli generate-csr \
+  --host myagent.example.com \
+  --org "Example Corp" \
+  --version 1.0.0 \
+  --csr-type identity \
+  --out-dir ./certs-renewal
+```
+
+**Flags:**
+- `--host` (required): Agent host domain
+- `--org` (required): Organization name
+- `--version` (required): Agent version for ANS URI (e.g., 1.0.0)
+- `--country`: Country code (default: US)
+- `--out-dir`: Output directory (default: current directory)
+- `--key-type`: Force one key algorithm for every generated CSR, `rsa` or `ec` (unset: EC P-256 for identity, RSA for server). EC keys are always P-256, the only curve the registry issues identity certificates for.
+- `--key-size`: RSA key size in bits, minimum 2048; ignored for EC keys (default: 2048)
+- `--csr-type`: Which CSRs to generate: `identity`, `server`, or `both` (default: both)
+
+**Output** (only the selected CSR types are written):
+- `identity.key` - Private key for identity certificate (`EC PRIVATE KEY` PEM by default, `RSA PRIVATE KEY` with `--key-type rsa`)
+- `identity.csr` - CSR for identity certificate
+- `server.key` - Private key for server certificate (`RSA PRIVATE KEY` PEM by default)
+- `server.csr` - CSR for server certificate
+
+Existing files with these names in `--out-dir` are overwritten, so use a fresh directory when generating a second key pair for an agent.
+
+### register
+
+Register a new agent with the Agent Name Service.
+
+```bash
+ans-cli register \
+  --name "My Agent" \
+  --host myagent.example.com \
+  --version 1.0.0 \
+  --description "An AI agent that analyzes sentiment" \
+  --identity-csr ./certs/identity.csr \
+  --server-csr ./certs/server.csr \
+  --endpoint-url https://myagent.example.com/mcp \
+  --metadata-url https://myagent.example.com/.well-known/agent-card.json \
+  --endpoint-protocol MCP \
+  --endpoint-transports STREAMABLE-HTTP \
+  --function "analyze-sentiment:Sentiment Analysis:nlp,ml"
+```
+
+**Flags:**
+- `--name` (required): Agent display name
+- `--host` (required): Agent host domain
+- `--version` (required): Agent version (semver format)
+- `--identity-csr` (required): Path to identity CSR PEM file
+- `--endpoint-url` (required): Agent endpoint URL
+- `--description`: Agent description
+- `--server-csr`: Path to server CSR PEM file
+- `--server-cert`: Path to server certificate PEM file (BYOC)
+- `--metadata-url`: Agent metadata URL, absolute https (e.g., `https://myagent.example.com/.well-known/agent-card.json`)
+- `--endpoint-protocol`: Protocol (MCP, A2A, HTTP-API) (default: MCP)
+- `--endpoint-transports`: Comma-separated list of transports (default: STREAMABLE-HTTP)
+- `--function`: Agent function in format `id:name` or `id:name:tag1,tag2` (repeatable)
+
+**Function Flag Format:**
+
+The `--function` flag can be specified multiple times to declare the capabilities/operations your agent provides. Each function must include an ID and name, with optional tags for categorization:
+
+```bash
+# Basic format: id:name
+--function "analyze-sentiment:Sentiment Analysis"
+
+# With tags: id:name:tag1,tag2,tag3
+--function "analyze-text:Text Analysis:nlp,ml,analytics"
+```
+
+**Function Constraints:**
+- Function ID: Max 64 characters, must be unique
+- Function Name: Max 64 characters
+- Tags: Max 5 tags per function, max 20 characters per tag
+
+**Example with functions:**
+```bash
+ans-cli register \
+  --name "NLP Agent" \
+  --host myagent.example.com \
+  --version 1.0.0 \
+  --identity-csr ./certs/identity.csr \
+  --server-csr ./certs/server.csr \
+  --endpoint-url https://myagent.example.com/api \
+  --metadata-url https://myagent.example.com/.well-known/agent-card.json \
+  --endpoint-protocol MCP \
+  --endpoint-transports STREAMABLE-HTTP \
+  --function "analyze-sentiment:Sentiment Analysis:nlp,ml" \
+  --function "extract-entities:Entity Extraction:nlp,ner" \
+  --function "summarize:Text Summarization:nlp"
+```
+
+### status
+
+Get detailed status and information about a registered agent.
+
+```bash
+ans-cli status <agentId>
+```
+
+### verify-acme
+
+Trigger ACME domain validation. Call this after placing the ACME challenge token.
+
+```bash
+ans-cli verify-acme <agentId>
+```
+
+### verify-dns
+
+Verify that all required DNS records have been configured correctly.
+
+```bash
+ans-cli verify-dns <agentId>
+```
+
+### search
+
+Search for registered agents using flexible criteria.
+
+```bash
+# Search by name
+ans-cli search --name "Sentiment Analyzer"
+
+# Search by host
+ans-cli search --host myagent.example.com
+
+# Search with pagination
+ans-cli search --name "Analyzer" --limit 10 --offset 0
+```
+
+**Flags:**
+- `--name`: Agent display name (partial matching)
+- `--host`: Agent host domain (partial matching)
+- `--version`: Agent version (flexible matching)
+- `--limit`: Maximum number of results (default: 20, max: 100)
+- `--offset`: Number of results to skip
+
+### resolve
+
+Resolve an agent by host and version pattern.
+
+```bash
+# Resolve any version
+ans-cli resolve myagent.example.com
+
+# Resolve specific version pattern
+ans-cli resolve myagent.example.com --version "^1.0.0"
+
+# Resolve exact version
+ans-cli resolve myagent.example.com --version "2.1.0"
+```
+
+**Flags:**
+- `--version` / `-V`: Version pattern to match (default: "*" for any)
+
+**Version Patterns:**
+- `*` - Match any version
+- `1.0.0` - Exact version match
+- `^1.0.0` - Compatible with 1.x.x (major fixed)
+- `~1.2.3` - Compatible with 1.2.x (minor fixed)
+
+### revoke
+
+Revoke an agent registration.
+
+```bash
+# Revoke due to key compromise
+ans-cli revoke <agentId> --reason KEY_COMPROMISE
+
+# Revoke with comments
+ans-cli revoke <agentId> --reason SUPERSEDED --comments "Replaced by v2.0.0"
+```
+
+**Flags:**
+- `--reason` (required): Revocation reason
+- `--comments`: Additional context for the revocation
+
+**Valid Revocation Reasons:**
+- `KEY_COMPROMISE` - Private key was compromised
+- `CA_COMPROMISE` - Certificate authority was compromised
+- `AFFILIATION_CHANGED` - Agent ownership/affiliation changed
+- `SUPERSEDED` - Replaced by a newer agent version
+- `CESSATION_OF_OPERATION` - Agent is no longer operational
+- `CERTIFICATE_HOLD` - Temporarily suspended
+- `PRIVILEGE_WITHDRAWN` - Authorization was revoked
+- `AA_COMPROMISE` - Attribute authority was compromised
+- `EXPIRED_CERT` - Certificate or credential has expired
+- `REMOVE_FROM_CRL` - Remove a previously revoked certificate from the revocation list
+- `UNSPECIFIED` - Revoked for an unspecified reason
+
+### events
+
+Retrieve paginated ANS events for monitoring and auditing.
+
+```bash
+# Get recent events
+ans-cli events
+
+# Get events with pagination
+ans-cli events --limit 50 --last-log-id <cursor>
+
+# Filter by provider
+ans-cli events --provider-id <provider-id>
+```
+
+**Flags:**
+- `--limit`: Maximum number of events (default: 20, max: 200)
+- `--provider-id`: Filter events by provider ID
+- `--last-log-id`: Cursor for pagination (use lastLogId from previous response)
+- `--follow` / `-f`: Continuously poll for new events (Ctrl+C to stop)
+- `--poll-interval`: Seconds between polls in follow mode (default: 5)
+
+**Follow Mode Examples:**
+```bash
+# Continuously poll for new events
+ans-cli events --follow
+
+# Follow with custom poll interval (10 seconds)
+ans-cli events --follow --poll-interval 10
+```
+
+### csr-status
+
+Check the processing status of a Certificate Signing Request.
+
+```bash
+ans-cli csr-status <agentId> <csrId>
+```
+
+### submit-identity-csr
+
+Submit a new identity CSR for certificate renewal or updates.
+
+```bash
+ans-cli submit-identity-csr <agentId> --csr-file ./new-identity.csr
+```
+
+**Flags:**
+- `--csr-file` (required): Path to CSR PEM file
+
+### submit-server-csr
+
+Submit a new server CSR for certificate renewal or updates.
+
+```bash
+ans-cli submit-server-csr <agentId> --csr-file ./new-server.csr
+```
+
+**Flags:**
+- `--csr-file` (required): Path to CSR PEM file
+
+### CSR preflight validation
+
+`register`, `submit-identity-csr`, and `submit-server-csr` check each CSR against the registry's intake rules before making the authenticated request, so a CSR the registry would reject fails locally with equivalent guidance. The rules match the registry's intake policy:
+
+| CSR | Public key | Signature algorithm |
+|-----|------------|---------------------|
+| Identity | RSA 2048, 3072, or 4096 bits, or EC P-256 | SHA-256, SHA-384, or SHA-512 with RSA or ECDSA |
+| Server | RSA 2048 or 4096 bits | SHA-256 with RSA |
+
+The CSR file must contain exactly one well-formed PEM `CERTIFICATE REQUEST` block whose self-signature verifies; a file that also carries a private key is refused rather than uploaded. Subject and SAN checks (CN and DNS SAN equal to the agent host, URI SAN equal to the `ans://` name) stay with the registry, which reports them in its 422 response.
+
+EC P-256 identity CSRs require a registry deployment with EC support; a registry without it rejects them with a 422. When the SDK's copy of the rules lags the registry, `--skip-preflight` submits the CSR unchecked and lets the registry decide.
+
+The same rules are available to SDK users through the `csrvalidation` package (`csrvalidation.Validate(csrPEM, csrvalidation.IdentityRules())`), for example to check a BYOC CSR before submission.
+
+### get-identity-certs
+
+List all identity certificates associated with an agent.
+
+```bash
+ans-cli get-identity-certs <agentId>
+```
+
+### get-server-certs
+
+List all server certificates associated with an agent.
+
+```bash
+ans-cli get-server-certs <agentId>
+```
+
+### badge
+
+Retrieve the transparency log entry for an agent.
+
+```bash
+# Get transparency log entry
+ans-cli badge <agentId>
+
+# Include audit trail
+ans-cli badge <agentId> --audit
+
+# Include log checkpoint
+ans-cli badge <agentId> --checkpoint
+
+# Get everything
+ans-cli badge <agentId> --audit --checkpoint
+```
+
+**Flags:**
+- `--audit`: Also retrieve audit trail
+- `--checkpoint`: Also retrieve log checkpoint
+- `--transparency-url`: Transparency log base URL (env: ANS_TRANSPARENCY_URL)
+
+## Complete Registration Workflow
+
+Here's a complete example of registering a new agent:
+
+```bash
+# 1. Generate CSRs
+ans-cli generate-csr \
+  --host myagent.example.com \
+  --org "Example Corp" \
+  --version 1.0.0 \
+  --country US \
+  --out-dir ./certs
+
+# 2. Register the agent
+ans-cli register \
+  --name "My Agent" \
+  --host myagent.example.com \
+  --version 1.0.0 \
+  --description "An AI agent" \
+  --identity-csr ./certs/identity.csr \
+  --server-csr ./certs/server.csr \
+  --endpoint-url https://myagent.example.com/mcp \
+  --metadata-url https://myagent.example.com/.well-known/agent-card.json \
+  --endpoint-protocol MCP \
+  --endpoint-transports STREAMABLE-HTTP \
+  --function "analyze:Analyze Data:analytics,ml" \
+  --function "predict:Make Predictions:ml,forecasting"
+
+# Note the agentId from the response
+
+# 3. Configure DNS TXT record with the challenge token
+# (Follow instructions from the registration response)
+
+# 4. Trigger ACME validation
+ans-cli verify-acme <agentId>
+
+# 5. Wait for certificates to be issued
+ans-cli status <agentId>
+# Repeat until status shows certificates are ready
+
+# 6. Retrieve your certificates
+ans-cli get-identity-certs <agentId>
+ans-cli get-server-certs <agentId>
+```
+
+## JSON Output
+
+All commands support JSON output for scripting and automation:
+
+```bash
+ans-cli status <agentId> --json
+```
+
+## Verbose Mode
+
+Enable verbose output to see diagnostics on stderr, such as which authentication method is in use:
+
+```bash
+ans-cli register --verbose ...
+```
+
+## Examples
+
+### Search for agents by name
+```bash
+export ANS_API_KEY="your-api-key"
+ans-cli search --name "Analyzer"
+```
+
+### Authenticate with an OAuth 2.0 bearer token
+```bash
+export ANS_OAUTH_TOKEN="your-oauth-token"
+ans-cli status 550e8400-e29b-41d4-a716-446655440000
+```
+
+### Get agent status in JSON format
+```bash
+ans-cli status 550e8400-e29b-41d4-a716-446655440000 --json
+```
+
+### Register with environment variables
+```bash
+export ANS_API_KEY="your-api-key"
+export ANS_BASE_URL="https://api.ote-godaddy.com"
+
+ans-cli register \
+  --name "My Agent" \
+  --host myagent.example.com \
+  --version 1.0.0 \
+  --identity-csr ./certs/identity.csr \
+  --server-csr ./certs/server.csr \
+  --endpoint-url https://myagent.example.com/mcp \
+  --metadata-url https://myagent.example.com/.well-known/agent-card.json \
+  --endpoint-protocol MCP \
+  --endpoint-transports STREAMABLE-HTTP \
+  --function "analyze:Analyze Data:analytics"
+```
+
+### Register with metadata URL
+```bash
+ans-cli register \
+  --name "My Agent" \
+  --host myagent.example.com \
+  --version 1.0.0 \
+  --identity-csr ./certs/identity.csr \
+  --server-csr ./certs/server.csr \
+  --endpoint-url https://myagent.example.com/mcp \
+  --metadata-url https://myagent.example.com/.well-known/agent-card.json \
+  --endpoint-protocol MCP \
+  --endpoint-transports STREAMABLE-HTTP \
+  --function "analyze:Analyze Data:analytics"
+```
+
+## Development
+
+### Build
+```bash
+go build ./...
+```
+
+### Run tests
+```bash
+go test ./...
+```
+
+### Lint
+```bash
+golangci-lint run
+```
+
+## License
+
+Copyright © GoDaddy

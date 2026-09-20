@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import type { AgentAccessRequest } from "../../../src/shared/types";
 
 type Agent = { id: string; name: string; ans: string; state: string };
@@ -72,25 +73,45 @@ export function AgentPanel({
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ color: "var(--fg-dim)", textAlign: "left", borderBottom: "1px solid var(--line)" }}>
+                    <th style={{ paddingBottom: 4, width: "1%" }}></th>
                     <th style={{ paddingBottom: 4 }}>CHECK</th>
-                    <th style={{ paddingBottom: 4 }}>QUESTION</th>
                     <th style={{ paddingBottom: 4 }}>MECHANISM</th>
-                    <th style={{ paddingBottom: 4 }}>PASS</th>
                   </tr>
                 </thead>
                 <tbody>
                   {lastRequest.checks.map(c => (
-                    <tr key={c.name} style={{ borderBottom: "1px dashed var(--line-dim)" }}>
-                      <td style={{ padding: "4px 0", fontWeight: "bold" }}>{c.name}</td>
-                      <td style={{ padding: "4px 4px", color: "var(--fg-dim)" }}>{c.question}</td>
-                      <td style={{ padding: "4px 4px", color: "var(--fg-dim)" }}>{c.mechanism}</td>
-                      <td style={{ padding: "4px 0", textAlign: "center", color: c.passed ? "var(--ok)" : "var(--warn)" }}>
-                        {c.passed ? "✓" : "✗"}
-                      </td>
-                    </tr>
+                    <Fragment key={c.name}>
+                      <tr style={{ borderTop: "1px dashed var(--line-dim)" }}>
+                        <td style={{ padding: "5px 6px 0 0", verticalAlign: "top", color: c.passed ? "var(--ok)" : "var(--warn)" }}>
+                          {c.passed ? "\u2713" : "\u2717"}
+                        </td>
+                        <td style={{ padding: "5px 6px 0 0", fontWeight: "bold", verticalAlign: "top" }}>{c.name}</td>
+                        <td style={{ padding: "5px 0 0 0", color: "var(--fg-dim)", verticalAlign: "top" }}>{c.mechanism}</td>
+                      </tr>
+                      {c.detail && (
+                        <tr>
+                          <td />
+                          <td colSpan={2} style={{ padding: "1px 0 5px 0", color: "var(--fg-dim)", fontSize: "0.92em", opacity: 0.85, wordBreak: "break-word" }}>
+                            {c.detail}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
+              {lastRequest.assuranceTier && (
+                <div className="row" style={{ marginTop: 6 }}>
+                  <span className="k">Assurance</span>
+                  <span className="v">
+                    {lastRequest.assuranceTier === "silver"
+                      ? "silver \u00b7 DANE / TLSA verified"
+                      : lastRequest.assuranceTier === "bronze"
+                        ? "bronze \u00b7 PKI verified"
+                        : "none \u00b7 no completed handshake"}
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>

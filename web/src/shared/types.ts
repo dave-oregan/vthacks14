@@ -97,6 +97,8 @@ export interface AnsCheck {
   question: string;
   mechanism: string;
   passed: boolean;
+  /** What was actually observed — the evidence behind `passed`. */
+  detail?: string;
 }
 
 export interface AgentAccessRequest {
@@ -107,6 +109,8 @@ export interface AgentAccessRequest {
   verificationStatus: "verifying" | "verified" | "blocked" | "PENDING VALIDATION";
   decision: "allow" | "deny" | "pending";
   checks?: AnsCheck[];
+  /** Highest PKI assurance tier evidenced for the endpoint. */
+  assuranceTier?: "silver" | "bronze" | "none";
   timestampMs: number;
 }
 

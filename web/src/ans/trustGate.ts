@@ -45,7 +45,7 @@ export async function verifyAgentAccess(
   requestedScopes: string[],
   missionId?: string,
 ): Promise<AgentAccessRequest> {
-  const result = await verifyAnsIdentity(agentAnsName);
+  const result = await verifyAnsIdentity(agentAnsName, requestedScopes);
   const req: AgentAccessRequest = {
     id: uuid(),
     agentAnsName,
@@ -54,6 +54,7 @@ export async function verifyAgentAccess(
     verificationStatus: result.status,
     decision: result.isFullyVerified ? "allow" : "deny",
     checks: result.checks,
+    assuranceTier: result.assuranceTier,
     timestampMs: Date.now(),
   };
   store.saveAgentRequest(req);
