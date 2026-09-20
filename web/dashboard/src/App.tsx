@@ -4,14 +4,21 @@ import { useBrowserVision } from "./hooks/useBrowserVision";
 import { LivePOV } from "./components/LivePOV";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { AgentPanel } from "./components/AgentPanel";
-import { Timeline } from "./components/Timeline";
-import { LinkPanel } from "./components/LinkPanel";
+import { PhoneConnectionCard } from "./components/LinkPanel";
 import { RecallPicker } from "./components/RecallPicker";
 import { EmergencyModal } from "./components/EmergencyModal";
 import { GuardianEventStack } from "./components/GuardianEventStack";
 import { TranscriptViewer } from "./components/TranscriptViewer";
 import { VoiceIndicator } from "./components/VoiceIndicator";
+import { ModeTabs } from "./components/ModeTabs";
+import { ConnectionStatus } from "./components/ConnectionStatus";
+import { DemoMenu } from "./components/DemoMenu";
+import { RecallSearch } from "./components/RecallSearch";
+import { RecallResultPanel } from "./components/RecallResultPanel";
+import { MemoryTimeline, type MemoryReelItem } from "./components/MemoryTimeline";
+import { GuardianPanel } from "./components/GuardianPanel";
 import { unlockAudio } from "./voice/voicePlayer";
+import type { AppMode } from "./lib/format";
 
 export function App() {
   const {
@@ -31,7 +38,20 @@ export function App() {
     queryGuardianMemory,
     injectGuardianDemo,
   } = useSightline();
+
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [mode, setMode] = useState<AppMode>("live");
+  const [query, setQuery] = useState("");
+  const [guardianQuery, setGuardianQuery] = useState("Where was the last AED?");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [recallNote, setRecallNote] = useState<string | null>(null);
+  const [guardianNote, setGuardianNote] = useState<string | null>(null);
+  const [picker, setPicker] = useState<{ query: string; matches: RecallMatch[] } | null>(null);
+  const [selectedMatch, setSelectedMatch] = useState<RecallMatch | null>(null);
+  const [rewinding, setRewinding] = useState(false);
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [focusConnect, setFocusConnect] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (theme === "dark") {
@@ -41,16 +61,38 @@ export function App() {
     }
   }, [theme]);
 
-  const [query, setQuery] = useState("Where is my black laptop?");
-  const [guardianQuery, setGuardianQuery] = useState("Where was the last AED?");
-  const [busy, setBusy] = useState<string | null>(null);
-  const [recallNote, setRecallNote] = useState<string | null>(null);
-  const [guardianNote, setGuardianNote] = useState<string | null>(null);
-  const [picker, setPicker] = useState<{ query: string; matches: RecallMatch[] } | null>(null);
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "1") setMode("live");
+      if (e.key === "2") setMode("recall");
+      if (e.key === "3") setMode("guardian");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const guardianMode = Boolean(state?.guardianMode ?? state?.policeMode);
-  const gStatus = state?.guardianStatus;
+  const phoneLinked = Boolean(state?.session?.connected);
+
+  // Align Guardian backend flag with the Guardian tab (once per mode change).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (mode === "guardian" && !guardianMode) {
+        if (!cancelled) await setGuardianMode(true);
+      } else if (mode !== "guardian" && guardianMode) {
+        if (!cancelled) await setGuardianMode(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally only when mode changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   const { detections: browserDets, ready: visionReady, status: visionStatus } = useBrowserVision(
     state?.latestFrameJpegBase64 ?? null,
@@ -59,8 +101,7 @@ export function App() {
 
   const overlayDetections = useMemo(() => {
     const server = state?.latestDetections ?? [];
-
-    if (!guardianMode) {
+    if (mode !== "guardian") {
       if (!visionReady) return server;
       return browserDets.map((d) => {
         const match = server.find(
@@ -74,8 +115,6 @@ export function App() {
           : d;
       });
     }
-
-    // Guardian POV: people + safety-relevant classes (observations, not judgments).
     const fromBrowser = browserDets.filter((d) =>
       /\b(person|people|crowd)\b/i.test(`${d.label} ${d.displayName ?? ""}`),
     );
@@ -95,33 +134,36 @@ export function App() {
       if (!dup) merged.push(s);
     }
     return merged;
-  }, [browserDets, state?.latestDetections, visionReady, guardianMode]);
+  }, [browserDets, state?.latestDetections, visionReady, mode]);
 
-  const linkStatus = useMemo(() => {
-    if (!state?.session?.connected) return { label: "LINK DOWN", tone: "warn" as const };
-    return { label: "LINKED", tone: "ok" as const };
-  }, [state?.session?.connected]);
-
-  const lasStatus = useMemo(() => {
-    const la = state?.locateAnything;
-    if (!la?.configured) return { label: "LAs OFF", tone: "" as const, title: "LocateAnything URL not set" };
-    if (la.ok) {
-      const ms = la.latencyMs != null ? ` · ${la.latencyMs}ms` : "";
+  const reelItems: MemoryReelItem[] = useMemo(() => {
+    const objs = (state?.objects ?? []).map((o) => {
+      const phrase =
+        o.displayName?.trim() ||
+        [...o.descriptors.filter((d) => d !== o.canonicalLabel).slice(0, 2), o.canonicalLabel]
+          .filter(Boolean)
+          .join(" ");
       return {
-        label: "LAs OK",
-        tone: "ok" as const,
-        title: `LocateAnything reachable${ms}`,
+        id: o.id,
+        kind: "object" as const,
+        label: phrase,
+        timestampMs: o.lastSeenAtMs,
+        thumbBase64: o.thumbBase64,
       };
-    }
-    return {
-      label: "LAs DOWN",
-      tone: "warn" as const,
-      title: la.detail ? `LocateAnything: ${la.detail}` : "LocateAnything unreachable",
-    };
-  }, [state?.locateAnything]);
+    });
+    const safety = (state?.guardianEvents ?? [])
+      .filter((e) => e.severity === "critical" || e.severity === "high" || e.category === "distress")
+      .map((e) => ({
+        id: `g-${e.id}`,
+        kind: "safety" as const,
+        label: e.title,
+        timestampMs: e.timestamp,
+        thumbBase64: null as string | null,
+      }));
+    return [...objs, ...safety].sort((a, b) => b.timestampMs - a.timestampMs);
+  }, [state?.objects, state?.guardianEvents]);
 
   async function run(name: string, fn: () => Promise<unknown>) {
-    // Unlock browser audio inside the click stack so TTS that arrives later can play.
     if (name === "fall" || name === "crash" || name === "recall" || name === "pick" || name === "gquery") {
       unlockAudio();
     }
@@ -133,17 +175,46 @@ export function App() {
     }
   }
 
+  function applyMatch(m: RecallMatch, narrative: string | null) {
+    setSelectedMatch(m);
+    setRecallNote(narrative);
+    setRewinding(true);
+    window.setTimeout(() => setRewinding(false), 700);
+    setMode("recall");
+  }
+
   async function doRecall() {
     const result = await recall(query);
     if (result.needsChoice && result.matches.length > 1) {
       setPicker({ query: result.query || query, matches: result.matches });
       setRecallNote(result.text);
+      setMode("recall");
       return;
     }
-    if (result.matches[0]?.mapsUrl) {
-      window.open(result.matches[0].mapsUrl, "_blank", "noopener,noreferrer");
+    const top = result.matches[0];
+    if (top) {
+      applyMatch(top, result.text);
+      if (top.kind !== "transcript") await selectRecall(top);
+    } else {
+      setSelectedMatch(null);
+      setRecallNote(result.text || "Nothing found in memory yet.");
+      setMode("recall");
     }
-    setRecallNote(result.text);
+    setPicker(null);
+  }
+
+  async function onPickMatch(m: RecallMatch) {
+    await selectRecall(m);
+    applyMatch(
+      m,
+      m.kind === "transcript"
+        ? m.transcriptText
+          ? `${m.phrase}: “${m.transcriptText}” · ${m.lastSeenLabel}`
+          : `${m.phrase} · ${m.lastSeenLabel}`
+        : m.latitude != null && m.longitude != null
+          ? `${m.phrase} · last seen near ${m.latitude.toFixed(5)}, ${m.longitude.toFixed(5)}`
+          : `${m.phrase} · ${m.lastSeenLabel}`,
+    );
     setPicker(null);
   }
 
@@ -152,359 +223,239 @@ export function App() {
     setGuardianNote(result.text);
   }
 
-  async function onPickMatch(m: RecallMatch) {
-    await selectRecall(m);
-    if (m.kind === "transcript") {
-      setRecallNote(
-        m.transcriptText
-          ? `${m.phrase}: “${m.transcriptText}” · ${m.lastSeenLabel}`
-          : `${m.phrase} · ${m.lastSeenLabel}`,
-      );
-      setPicker(null);
-      return;
-    }
-    if (m.mapsUrl) {
-      window.open(m.mapsUrl, "_blank", "noopener,noreferrer");
-    }
-    setRecallNote(
-      m.latitude != null && m.longitude != null
-        ? `${m.phrase} → ${m.latitude.toFixed(5)}, ${m.longitude.toFixed(5)}`
-        : `${m.phrase} (no GPS yet)`,
-    );
-    setPicker(null);
+  function onModeChange(next: AppMode) {
+    setMode(next);
   }
 
   const showBlockingEmergency = Boolean(state?.emergencyAlert?.active);
-  const sensors = gStatus?.sensors;
+
+  const recallCanvas =
+    selectedMatch?.thumbBase64 != null
+      ? selectedMatch.thumbBase64
+      : mode === "recall" && selectedMatch
+        ? state?.latestFrameJpegBase64
+        : state?.latestFrameJpegBase64;
+
+  const recallHighlight =
+    selectedMatch && selectedMatch.kind !== "transcript"
+      ? selectedMatch.label || selectedMatch.phrase
+      : null;
 
   return (
-    <div className={`app ${guardianMode ? "app--guardian" : ""}`}>
-      <header className="header">
-        <div className="brand">
-          <div className="brand-mark">
-            <h1>SIGHTLINE</h1>
-          </div>
-          <span>
-            {guardianMode
-              ? "Guardian Mode — observations for first responders · humans decide"
-              : "Mission Control — link the phone, recall what the world forgot"}
-          </span>
+    <div className={`app app--${mode}${mode === "guardian" ? " app--guardian" : ""}`}>
+      <header className="topnav">
+        <div className="topnav-left">
+          <h1 className="wordmark">SIGHTLINE</h1>
+          <ModeTabs mode={mode} onChange={onModeChange} />
         </div>
-        <div className="header-meta">
-          <div className="status-rail">
-            <div className="pill">
-              <span className={`dot ${state?.live ? "live" : ""}`} />
-              {state?.live ? "LIVE" : "IDLE"}
-            </div>
-            {guardianMode && (
-              <div className="pill pill--guardian">
-                <span className="dot ok" />
-                GUARDIAN ACTIVE
-              </div>
-            )}
-            <div className="pill">
-              <span className={`dot ${linkStatus.tone}`} />
-              {linkStatus.label}
-            </div>
-            <div className="pill" title={lasStatus.title}>
-              <span className={`dot ${lasStatus.tone}`} />
-              {lasStatus.label}
-            </div>
-            <div className="pill">{connected ? "WS OK" : "WS…"}</div>
-            <div className="pill">{state?.mode ?? "STANDBY"}</div>
-            <div className="pill">{state?.objects.length ?? 0} mem</div>
-          </div>
-          <div className="action-rail">
-            <button
-              className="btn"
-              onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-              title="Toggle Dark Mode"
-            >
-              {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
-            </button>
-            <button
-              className="btn"
-              onClick={() => setTranscriptOpen(true)}
-              title="Open live transcript history"
-            >
-              Transcript
-            </button>
-            <button
-              className={`btn ${guardianMode ? "primary" : ""}`}
-              onClick={() => run("guardian", () => setGuardianMode(!guardianMode))}
-              disabled={!!busy}
-              title="Toggle Guardian Mode"
-            >
-              {guardianMode ? "Guardian ON" : "Guardian"}
-            </button>
-            <button
-              className="btn danger"
-              onClick={() => run("fall", simulateFall)}
-              disabled={!!busy}
-              title={
-                guardianMode
-                  ? "Demo: possible responder distress signal"
-                  : "Demo only — does not call 911"
-              }
-            >
-              {guardianMode ? "Simulate Distress" : "Simulate Fall"}
-            </button>
-            <button
-              className="btn danger"
-              onClick={() => run("crash", simulateCrash)}
-              disabled={!!busy}
-              title="Demo: high speed then rapid deceleration — does not call 911"
-            >
-              Simulate Crash
-            </button>
-            <button className="btn" onClick={() => run("reset", resetDemo)} disabled={!!busy}>
-              Reset
-            </button>
-          </div>
+        <div className="topnav-right">
+          <ConnectionStatus
+            phoneConnected={phoneLinked}
+            wsConnected={connected}
+            live={Boolean(state?.live)}
+            memoryCount={state?.objects.length ?? 0}
+            locateAnything={state?.locateAnything}
+          />
+          <DemoMenu
+            busy={!!busy}
+            showGuardianInject={mode === "guardian"}
+            onFall={() => void run("fall", simulateFall)}
+            onCrash={() => void run("crash", simulateCrash)}
+            onReset={() => void run("reset", resetDemo)}
+            onInject={(id) => void run(`demo-${id}`, () => injectGuardianDemo(id))}
+          />
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() => setTranscriptOpen(true)}
+            title="Transcript"
+          >
+            Transcript
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() => setSettingsOpen((v) => !v)}
+            aria-expanded={settingsOpen}
+          >
+            Settings
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() => setTheme(theme === "light" ? "dark" : "light")}
+            aria-label="Toggle theme"
+          >
+            {theme === "dark" ? "Light" : "Dark"}
+          </button>
         </div>
       </header>
 
-      <div className="main">
-        <section className="panel pov-panel">
-          <div className="panel-title">
-            {guardianMode ? "Field POV · Guardian observations" : "Field POV · live detections"}
-          </div>
-          <LivePOV
-            jpegBase64={state?.latestFrameJpegBase64 ?? null}
-            detections={overlayDetections}
-            source={state?.session?.videoStats?.lastVideoSource}
-            visionStatus={visionStatus}
-          />
-
-          {guardianMode ? (
-            <div className="guardian-bar">
-              <div className="guardian-status">
-                <div className="guardian-status-head">
-                  <span className="guardian-status-label">Active observations</span>
-                  <strong>
-                    {(gStatus?.highPriority ?? 0) > 0
-                      ? `${gStatus?.highPriority} high priority`
-                      : "Clear"}
-                    {" · "}
-                    {gStatus?.informational ?? 0} informational
-                  </strong>
-                </div>
-                <div className="guardian-sensors">
-                  <span className={sensors?.camera ? "on" : ""}>● Camera</span>
-                  <span className={sensors?.location ? "on" : ""}>● Location</span>
-                  <span className={sensors?.motion ? "on" : ""}>● Motion</span>
-                  <span className={sensors?.audio ? "on" : ""}>● Audio</span>
-                  <span>
-                    {gStatus?.groupCount ?? 0} people
-                    {gStatus?.largeGroup ? " (crowd)" : ""}
-                  </span>
-                </div>
-              </div>
-              <div className="guardian-demo-actions">
-                <span className="guardian-demo-label">Demo inject</span>
-                {(
-                  [
-                    ["plate", "Plate"],
-                    ["aed", "AED"],
-                    ["extinguisher", "Extinguisher"],
-                    ["firearm", "Firearm*"],
-                    ["distress", "Distress"],
-                    ["address", "Address"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className="btn"
-                    disabled={!!busy}
-                    title={id === "firearm" ? "Uses simulated training imagery — no real weapons" : undefined}
-                    onClick={() => run(`demo-${id}`, () => injectGuardianDemo(id))}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <div className="actions">
-                <input
-                  type="text"
-                  value={guardianQuery}
-                  onChange={(e) => setGuardianQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void run("gquery", doGuardianQuery);
-                  }}
-                  placeholder="Where was the last AED?"
-                  aria-label="Guardian memory query"
-                />
-                <button
-                  className="btn primary"
-                  onClick={() => run("gquery", doGuardianQuery)}
-                  disabled={!!busy}
-                >
-                  Ask memory
-                </button>
-              </div>
-              {guardianNote && (
-                <div className="stack" style={{ paddingTop: 4, borderTop: "1px solid var(--line)" }}>
-                  <div className="row">
-                    <span className="k">Guardian memory</span>
-                    <span className="v" style={{ textAlign: "left", whiteSpace: "pre-wrap" }}>
-                      {guardianNote}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <>
-              <div className="actions">
-                <input
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void run("recall", doRecall);
-                  }}
-                  placeholder="Where is my laptop? / Who did I meet?"
-                  aria-label="Recall query"
-                />
-                <button
-                  className="btn primary"
-                  onClick={() => run("recall", doRecall)}
-                  disabled={!!busy}
-                >
-                  Recall
-                </button>
-              </div>
-              {recallNote && (
-                <div className="stack" style={{ paddingTop: 4, borderTop: "1px solid var(--line)" }}>
-                  <div className="row">
-                    <span className="k">Last recall</span>
-                    <span className="v" style={{ textAlign: "left", whiteSpace: "normal" }}>
-                      {recallNote}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </section>
-
-        <aside className="side">
-          <LinkPanel linked={Boolean(state?.session?.connected)} />
-
-          {guardianMode && (
-            <details className="panel" open>
-              <summary className="panel-title">Live memory</summary>
-              <div className="scroll">
-                {(state?.guardianEvents ?? []).length === 0 && (
-                  <div className="det-item">No Guardian observations yet — use Demo inject or live vision.</div>
-                )}
-                {(state?.guardianEvents ?? []).map((e) => (
-                  <div className="det-item" key={e.id}>
-                    <div className="row">
-                      <span className="k">{new Date(e.timestamp).toLocaleTimeString()}</span>
-                      <span className="v">{e.severity}</span>
-                    </div>
-                    <div className="row">
-                      <span className="k">{e.title}</span>
-                      <span className="v">
-                        {typeof e.confidence === "number"
-                          ? `${Math.round(e.confidence * 100)}%`
-                          : e.category}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
-
-          <details className="panel" open>
-            <summary className="panel-title">Vision</summary>
-            <div className="scroll">
-              {overlayDetections.length === 0 && (
-                <div className="det-item">
-                  {guardianMode
-                    ? "Safety-relevant observations only — clutter ignored"
-                    : "Waiting for objects — phone, laptop, backpack…"}
-                </div>
-              )}
-              {overlayDetections.map((d) => (
-                <div className="det-item" key={d.trackId}>
-                  <div className="row">
-                    <span className="k">{d.displayName}</span>
-                    <span className="v">{Math.round(d.confidence * 100)}%</span>
-                  </div>
-                  <div className="row">
-                    <span className="k">descriptors</span>
-                    <span className="v">{d.descriptors.join(", ")}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </details>
-
-          <MemoryPanel objects={state?.objects ?? []} />
-
-          <details className="panel" open>
-            <summary className="panel-title">Context</summary>
-            <div className="stack">
-              <div className="row">
-                <span className="k">Location</span>
-                <span className="v">
-                  {state?.session?.lastLocation
-                    ? `${state.session.lastLocation.latitude.toFixed(5)}, ${state.session.lastLocation.longitude.toFixed(5)}`
-                    : "—"}
-                </span>
-              </div>
-              <div className="row">
-                <span className="k">Video</span>
-                <span className="v">
-                  {state?.session?.activeSources?.video ??
-                    state?.session?.videoStats?.lastVideoSource ??
-                    "—"}
-                </span>
-              </div>
-              <div className="row">
-                <span className="k">Frames</span>
-                <span className="v">
-                  {state?.session?.videoStats?.framesReceived ?? 0} /{" "}
-                  {state?.session?.videoStats?.framesVisioned ?? 0}
-                </span>
-              </div>
-              <div className="row">
-                <span className="k">Transcript</span>
-                <span className="v">{state?.transcriptSnippet || "—"}</span>
-              </div>
-              <div style={{ padding: "8px 12px 12px" }}>
-                <button
-                  type="button"
-                  className="btn"
-                  style={{ width: "100%" }}
-                  onClick={() => setTranscriptOpen(true)}
-                >
-                  Open full transcript
-                </button>
-              </div>
-            </div>
-          </details>
-
+      {settingsOpen && (
+        <div className="settings-strip" role="region" aria-label="Settings">
           <AgentPanel
             agents={state?.agents ?? []}
             lastRequest={state?.lastAccessRequest ?? null}
             onVerify={(ans) => run("ans", () => verifyAgent(ans, ["location", "memory.read"]))}
             onBlockUnknown={() => run("rogue", simulateUnknown)}
           />
+          <button type="button" className="btn" onClick={() => setSettingsOpen(false)}>
+            Close settings
+          </button>
+        </div>
+      )}
+
+      <div className="workspace">
+        <section className="canvas-col">
+          <LivePOV
+            jpegBase64={recallCanvas ?? null}
+            detections={mode === "recall" && selectedMatch?.thumbBase64 ? [] : overlayDetections}
+            source={state?.session?.videoStats?.lastVideoSource}
+            visionStatus={visionStatus}
+            variant={mode === "recall" ? "recall" : mode === "guardian" ? "guardian" : "live"}
+            highlightLabel={mode === "recall" ? recallHighlight : null}
+            rewinding={rewinding}
+            onConnectClick={
+              !phoneLinked
+                ? () => {
+                    setFocusConnect(true);
+                    setMode("live");
+                  }
+                : undefined
+            }
+            emptyTitle={
+              mode === "recall"
+                ? "Search memory to rewind"
+                : "Connect a camera to begin seeing"
+            }
+            emptyHint={
+              mode === "recall"
+                ? "Try “Where is my black laptop?”"
+                : "Your existing memories remain searchable."
+            }
+            statusLine={
+              mode === "recall" && selectedMatch
+                ? `Remembered · ${selectedMatch.phrase}`
+                : null
+            }
+          />
+
+          {mode === "recall" && (
+            <RecallSearch
+              query={query}
+              busy={busy === "recall"}
+              onChange={setQuery}
+              onSubmit={() => void run("recall", doRecall)}
+            />
+          )}
+
+          {mode === "live" && (
+            <div className="live-quick-recall">
+              <button type="button" className="btn primary" onClick={() => setMode("recall")}>
+                Search memory
+              </button>
+              <span>The physical world is searchable.</span>
+            </div>
+          )}
+        </section>
+
+        <aside className="context-col">
+          {mode === "live" && (
+            <>
+              <PhoneConnectionCard linked={phoneLinked} focusConnect={focusConnect} />
+              <div className="side-section">
+                <h3 className="side-title">Seeing now</h3>
+                <div className="seeing-list">
+                  {overlayDetections.length === 0 && (
+                    <p className="side-muted">Nothing labeled yet — point the camera at an object.</p>
+                  )}
+                  {overlayDetections.slice(0, 6).map((d) => (
+                    <div className="seeing-item" key={d.trackId}>
+                      <strong>{d.displayName}</strong>
+                      <span>{Math.round(d.confidence * 100)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <MemoryPanel objects={state?.objects ?? []} />
+            </>
+          )}
+
+          {mode === "recall" && (
+            <RecallResultPanel
+              match={selectedMatch}
+              narrative={recallNote}
+              onViewMaps={() => {
+                if (selectedMatch?.mapsUrl) {
+                  window.open(selectedMatch.mapsUrl, "_blank", "noopener,noreferrer");
+                }
+              }}
+              onClear={() => {
+                setSelectedMatch(null);
+                setRecallNote(null);
+              }}
+            />
+          )}
+
+          {mode === "guardian" && (
+            <GuardianPanel
+              enabled={guardianMode}
+              status={state?.guardianStatus}
+              events={state?.guardianEvents ?? []}
+              busy={!!busy}
+              onToggle={() => void run("guardian", () => setGuardianMode(!guardianMode))}
+              onDismiss={(id) => void dismissGuardianEvent(id)}
+              onConfirm={(id) => void confirmGuardianEvent(id)}
+              query={guardianQuery}
+              onQueryChange={setGuardianQuery}
+              onAsk={() => void run("gquery", doGuardianQuery)}
+              note={guardianNote}
+            />
+          )}
         </aside>
       </div>
 
-      <Timeline events={state?.events ?? []} />
-
-      <GuardianEventStack
-        events={state?.guardianEvents ?? []}
-        onDismiss={(id) => void dismissGuardianEvent(id)}
-        onConfirm={(id) => void confirmGuardianEvent(id)}
+      <MemoryTimeline
+        items={reelItems}
+        selectedId={selectedMatch?.id}
+        scrubbing={rewinding}
+        onSelect={(id) => {
+          const obj = state?.objects?.find((o) => o.id === id);
+          if (!obj) return;
+          const phrase =
+            obj.displayName?.trim() ||
+            [...obj.descriptors.slice(0, 2), obj.canonicalLabel].filter(Boolean).join(" ");
+          applyMatch(
+            {
+              id: obj.id,
+              kind: "object",
+              phrase,
+              label: obj.canonicalLabel,
+              descriptors: obj.descriptors,
+              lastSeenAtMs: obj.lastSeenAtMs,
+              lastSeenLabel: new Date(obj.lastSeenAtMs).toLocaleString(),
+              latitude: obj.lastLocation?.latitude ?? null,
+              longitude: obj.lastLocation?.longitude ?? null,
+              mapsUrl:
+                obj.lastLocation != null
+                  ? `https://www.google.com/maps?q=${obj.lastLocation.latitude},${obj.lastLocation.longitude}`
+                  : null,
+              thumbBase64: obj.thumbBase64 ?? null,
+              sightingCount: obj.sightingCount,
+              status: obj.status,
+            },
+            null,
+          );
+        }}
       />
+
+      {mode === "guardian" && (
+        <GuardianEventStack
+          events={state?.guardianEvents ?? []}
+          onDismiss={(id) => void dismissGuardianEvent(id)}
+          onConfirm={(id) => void confirmGuardianEvent(id)}
+        />
+      )}
 
       <VoiceIndicator />
 

@@ -8,8 +8,6 @@ type Detection = {
   bbox: { x: number; y: number; width: number; height: number };
 };
 
-const BOX_COLORS = ["#5eead4", "#38bdf8", "#fb7185", "#a3e635", "#fbbf24", "#c4b5fd"];
-
 type Letterbox = { left: number; top: number; width: number; height: number };
 
 function base64ToObjectUrl(b64: string): string {
@@ -19,7 +17,6 @@ function base64ToObjectUrl(b64: string): string {
   return URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
 }
 
-/** Map normalized bboxes onto the letterboxed image inside object-fit:contain. */
 function computeLetterbox(
   wrapW: number,
   wrapH: number,
@@ -45,11 +42,25 @@ export function LivePOV({
   detections,
   source,
   visionStatus,
+  variant = "live",
+  highlightLabel,
+  emptyTitle,
+  emptyHint,
+  onConnectClick,
+  rewinding = false,
+  statusLine,
 }: {
   jpegBase64: string | null;
   detections: Detection[];
   source?: string;
   visionStatus?: string;
+  variant?: "live" | "recall" | "guardian";
+  highlightLabel?: string | null;
+  emptyTitle?: string;
+  emptyHint?: string;
+  onConnectClick?: () => void;
+  rewinding?: boolean;
+  statusLine?: string | null;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -61,6 +72,14 @@ export function LivePOV({
       setSrc(null);
       return;
     }
+    if (
+      jpegBase64.startsWith("data:") ||
+      jpegBase64.startsWith("blob:") ||
+      jpegBase64.startsWith("http")
+    ) {
+      setSrc(jpegBase64);
+      return;
+    }
     const url = base64ToObjectUrl(jpegBase64);
     setSrc(url);
     return () => URL.revokeObjectURL(url);
@@ -69,7 +88,6 @@ export function LivePOV({
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
-
     const sync = () => {
       const img = imgRef.current;
       if (!img?.naturalWidth) return;
@@ -77,20 +95,41 @@ export function LivePOV({
         computeLetterbox(wrap.clientWidth, wrap.clientHeight, img.naturalWidth, img.naturalHeight),
       );
     };
-
     sync();
     const ro = new ResizeObserver(sync);
     ro.observe(wrap);
     return () => ro.disconnect();
   }, [src]);
 
+  const showBoxes = variant !== "recall" || Boolean(highlightLabel);
+  const filtered =
+    variant === "recall" && highlightLabel
+      ? detections.filter((d) =>
+          `${d.displayName} ${d.label ?? ""}`.toLowerCase().includes(highlightLabel.toLowerCase()),
+        )
+      : detections;
+
+  const bottom =
+    statusLine ??
+    (src
+      ? filtered.length === 0
+        ? variant === "recall"
+          ? "Remembered moment"
+          : "No objects detected"
+        : `${filtered.length} object${filtered.length === 1 ? "" : "s"}`
+      : null);
+
   return (
-    <div className="pov-wrap" ref={wrapRef}>
+    <div
+      className={`pov-wrap${rewinding ? " pov-wrap--rewind" : ""}${variant === "recall" ? " pov-wrap--recall" : ""}`}
+      ref={wrapRef}
+    >
+      <div className="sightline-scan" aria-hidden="true" />
       {src ? (
         <img
           ref={imgRef}
           src={src}
-          alt="Live POV"
+          alt={variant === "recall" ? "Remembered moment" : "Live camera"}
           decoding="async"
           onLoad={() => {
             const wrap = wrapRef.current;
@@ -108,48 +147,57 @@ export function LivePOV({
         />
       ) : (
         <div className="pov-empty">
-          Waiting for iOS Link video…
-          <br />
-          Scan QR or Find Mission Control on the phone
+          <div className="pov-reticle" aria-hidden="true">
+            <span />
+            <span />
+          </div>
+          <p className="pov-empty-title">
+            {emptyTitle ?? "Connect a camera to begin seeing"}
+          </p>
+          <p className="pov-empty-hint">
+            {emptyHint ?? "Your existing memories remain searchable."}
+          </p>
+          {onConnectClick && (
+            <button type="button" className="btn primary" onClick={onConnectClick}>
+              Connect iPhone
+            </button>
+          )}
         </div>
       )}
-      {detections.map((d, i) => {
-        const color = BOX_COLORS[i % BOX_COLORS.length]!;
-        return (
-          <div
-            key={`${d.trackId}-${i}`}
-            className="overlay-box"
-            style={{
-              left: box.left + d.bbox.x * box.width,
-              top: box.top + d.bbox.y * box.height,
-              width: Math.max(2, d.bbox.width * box.width),
-              height: Math.max(2, d.bbox.height * box.height),
-              ["--box-color" as string]: color,
-            }}
-          >
-            <div className="overlay-label">
-              {d.displayName} {Math.round(d.confidence * 100)}%
+
+      {showBoxes &&
+        filtered.map((d, i) => {
+          const emphasize =
+            !highlightLabel ||
+            `${d.displayName} ${d.label ?? ""}`.toLowerCase().includes(highlightLabel.toLowerCase());
+          return (
+            <div
+              key={`${d.trackId}-${i}`}
+              className={`overlay-box${emphasize ? " overlay-box--focus" : " overlay-box--dim"}`}
+              style={{
+                left: box.left + d.bbox.x * box.width,
+                top: box.top + d.bbox.y * box.height,
+                width: Math.max(2, d.bbox.width * box.width),
+                height: Math.max(2, d.bbox.height * box.height),
+              }}
+            >
+              <div className="overlay-label">
+                {d.displayName}
+                {emphasize ? ` · ${Math.round(d.confidence * 100)}%` : ""}
+              </div>
             </div>
-          </div>
-        );
-      })}
-      <div
-        className="pill"
-        style={{
-        position: "absolute",
-        left: 14,
-        bottom: 14,
-        opacity: 0.9,
-        zIndex: 3,
-        background: "rgba(7, 9, 13, 0.72)",
-        color: "rgba(244, 246, 248, 0.88)",
-        borderColor: "rgba(255,255,255,0.12)",
-      }}
-      >
-        {detections.length} obj{detections.length === 1 ? "" : "s"}
-        {source ? ` · ${source}` : ""}
-        {visionStatus ? ` · ${visionStatus}` : ""}
-      </div>
+          );
+        })}
+
+      {bottom && (
+        <div className="pov-status" aria-live="polite">
+          {bottom}
+          {source && variant === "live" ? ` · ${source}` : ""}
+          {visionStatus && variant === "live" && visionStatus !== "ready"
+            ? ` · ${visionStatus}`
+            : ""}
+        </div>
+      )}
     </div>
   );
 }

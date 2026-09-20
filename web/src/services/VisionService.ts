@@ -338,7 +338,7 @@ export class VisionService extends EventEmitter {
     await Promise.all(
       toStore.map(async (det) => {
         const thumb =
-          frame.jpeg.length > 0 && det.confidence >= 0.5
+          frame.jpeg.length > 0
             ? await cropThumb(frame.jpeg, det.bbox)
             : null;
         const { object, isNew } = this.store.upsertSighting({

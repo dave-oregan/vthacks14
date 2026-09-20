@@ -97,28 +97,80 @@ export async function detectObjects(jpeg: Buffer): Promise<Detection[]> {
   }
 }
 
+/**
+ * Crop a memory thumbnail from a frame using a normalized bbox (0..1).
+ * Phone JPEGs often carry EXIF orientation — we must measure dimensions
+ * *after* applying `.rotate()`, otherwise crops land off-canvas (black thumbs).
+ */
 export async function cropThumb(
   jpeg: Buffer,
   bbox: BBox,
 ): Promise<Buffer | null> {
+  if (!jpeg?.length) return null;
   try {
-    const rotated = sharp(jpeg).rotate();
-    const meta = await rotated.metadata();
-    const w = meta.width ?? 1;
-    const h = meta.height ?? 1;
-    const left = Math.max(0, Math.floor(bbox.x * w));
-    const top = Math.max(0, Math.floor(bbox.y * h));
-    const width = Math.max(1, Math.min(w - left, Math.floor(bbox.width * w)));
-    const height = Math.max(1, Math.min(h - top, Math.floor(bbox.height * h)));
-    return await rotated
+    const oriented = await sharp(jpeg).rotate().toBuffer({ resolveWithObject: true });
+    const w = oriented.info.width || 1;
+    const h = oriented.info.height || 1;
+
+    // Slight pad so the object isn't clipped at the box edge.
+    const padX = Math.max(0.02, bbox.width * 0.08);
+    const padY = Math.max(0.02, bbox.height * 0.08);
+    const x0 = clamp01(bbox.x - padX);
+    const y0 = clamp01(bbox.y - padY);
+    const x1 = clamp01(bbox.x + bbox.width + padX);
+    const y1 = clamp01(bbox.y + bbox.height + padY);
+
+    let left = Math.floor(x0 * w);
+    let top = Math.floor(y0 * h);
+    let width = Math.max(1, Math.floor((x1 - x0) * w));
+    let height = Math.max(1, Math.floor((y1 - y0) * h));
+    if (left + width > w) width = Math.max(1, w - left);
+    if (top + height > h) height = Math.max(1, h - top);
+
+    // Degenerate / empty box → fall back to a centered scene crop.
+    if (width < 8 || height < 8 || !Number.isFinite(bbox.width) || !Number.isFinite(bbox.height)) {
+      return await sceneThumb(oriented.data, w, h);
+    }
+
+    const thumb = await sharp(oriented.data)
       .extract({ left, top, width, height })
-      .resize(96, 96, { fit: "cover" })
-      .jpeg({ quality: 55 })
+      .resize(160, 160, { fit: "cover" })
+      .jpeg({ quality: 72, mozjpeg: true })
       .toBuffer();
+
+    // If the crop is nearly black (wrong region / night / bad coords), use scene.
+    const stats = await sharp(thumb).stats();
+    const mean =
+      stats.channels.reduce((s, c) => s + c.mean, 0) / Math.max(1, stats.channels.length);
+    if (mean < 8) {
+      return await sceneThumb(oriented.data, w, h);
+    }
+    return thumb;
   } catch {
-    return null;
+    try {
+      return await sharp(jpeg)
+        .rotate()
+        .resize(160, 160, { fit: "cover" })
+        .jpeg({ quality: 72, mozjpeg: true })
+        .toBuffer();
+    } catch {
+      return null;
+    }
   }
 }
+
+/** Full-frame (or center) thumb when object crop fails. */
+async function sceneThumb(orientedJpeg: Buffer, w: number, h: number): Promise<Buffer> {
+  const side = Math.min(w, h);
+  const left = Math.max(0, Math.floor((w - side) / 2));
+  const top = Math.max(0, Math.floor((h - side) / 2));
+  return sharp(orientedJpeg)
+    .extract({ left, top, width: side, height: side })
+    .resize(160, 160, { fit: "cover" })
+    .jpeg({ quality: 72, mozjpeg: true })
+    .toBuffer();
+}
+
 
 function toDetection(
   p: cocoSsd.DetectedObject,

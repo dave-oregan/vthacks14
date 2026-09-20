@@ -1,3 +1,5 @@
+import { relativeTime } from "../lib/format";
+
 type Obj = {
   id: string;
   canonicalLabel: string;
@@ -12,19 +14,13 @@ type Obj = {
 
 export function MemoryPanel({ objects }: { objects: Obj[] }) {
   return (
-    <details className="panel" open>
-      <summary className="panel-title">Memory · last seen</summary>
-      <div className="scroll">
+    <div className="side-section memory-panel">
+      <h3 className="side-title">Recent memories</h3>
+      <div className="memory-panel-list">
         {objects.length === 0 && (
-          <div className="obj-item">
-            <div />
-            <div className="obj-meta">
-              <strong>No objects stored yet</strong>
-              <span>Detections with location become memory cards</span>
-            </div>
-          </div>
+          <p className="side-muted">Objects you see become searchable memories.</p>
         )}
-        {objects.map((o) => {
+        {objects.slice(0, 8).map((o) => {
           const phrase =
             o.displayName?.trim() ||
             [...o.descriptors.filter((d) => d !== o.canonicalLabel).slice(0, 3), o.canonicalLabel]
@@ -35,23 +31,16 @@ export function MemoryPanel({ objects }: { objects: Obj[] }) {
               {o.thumbBase64 ? (
                 <img src={`data:image/jpeg;base64,${o.thumbBase64}`} alt={phrase} />
               ) : (
-                <div style={{ width: 56, height: 56, background: "#000" }} />
+                <div className="obj-thumb-empty" aria-hidden="true" />
               )}
               <div className="obj-meta">
                 <strong>{phrase}</strong>
-                <span>
-                  {o.status} · ×{o.sightingCount} · {new Date(o.lastSeenAtMs).toLocaleString()}
-                </span>
-                <span>
-                  {o.lastLocation
-                    ? `${o.lastLocation.latitude.toFixed(5)}, ${o.lastLocation.longitude.toFixed(5)}`
-                    : "no geo yet"}
-                </span>
+                <span>{relativeTime(o.lastSeenAtMs)} · ×{o.sightingCount}</span>
               </div>
             </div>
           );
         })}
       </div>
-    </details>
+    </div>
   );
 }
