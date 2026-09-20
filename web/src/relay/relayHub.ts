@@ -172,6 +172,14 @@ export class RelayHub extends EventEmitter {
         console.warn("[relay] ignoring 0,0 location fix");
         return;
       }
+      const rawSpeed = msg.speedMetersPerSecond ?? msg.speed;
+      const speedNum = rawSpeed == null ? null : Number(rawSpeed);
+      const speedMetersPerSecond =
+        speedNum != null && Number.isFinite(speedNum) && speedNum >= 0 ? speedNum : null;
+      const rawCourse = msg.courseDegrees ?? msg.course;
+      const courseNum = rawCourse == null ? null : Number(rawCourse);
+      const courseDegrees =
+        courseNum != null && Number.isFinite(courseNum) && courseNum >= 0 ? courseNum : null;
       const geo: GeoPoint & { sessionId: string } = {
         sessionId,
         latitude,
@@ -181,15 +189,22 @@ export class RelayHub extends EventEmitter {
           msg.horizontalAccuracyMeters == null
             ? null
             : Number(msg.horizontalAccuracyMeters),
+        speedMetersPerSecond,
+        courseDegrees,
         timestampMs: Number(msg.timestampMs ?? nowMs()),
       };
       this.session.lastLocation = geo;
       this.session.updatedAtMs = nowMs();
+      const spd =
+        speedMetersPerSecond != null
+          ? ` ${(speedMetersPerSecond * 2.23693629).toFixed(0)}mph`
+          : "";
       console.log(
         `[relay] location ${latitude.toFixed(5)},${longitude.toFixed(5)}` +
           (geo.horizontalAccuracyMeters != null
             ? ` ±${Math.round(geo.horizontalAccuracyMeters)}m`
-            : ""),
+            : "") +
+          spd,
       );
       this.emit("location", geo);
       this.emit("status", this.session);

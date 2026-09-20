@@ -396,6 +396,10 @@ export class SightlineApp extends EventEmitter {
     return this.emergencyService.simulateFall();
   }
 
+  simulateCrash() {
+    return this.emergencyService.simulateCrash();
+  }
+
   dismissEmergency(): void {
     this.emergencyService.dismissEmergency();
   }

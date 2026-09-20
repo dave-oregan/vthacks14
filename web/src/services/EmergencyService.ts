@@ -2,13 +2,15 @@ import { EventEmitter } from "node:events";
 import type { RelayHub } from "../relay/relayHub.js";
 import type { MemoryStore } from "../memory/store.js";
 import { FallDetector, type FallEvent, type MotionSample } from "../motion/fallDetector.js";
+import { CrashDetector, type CrashEvent } from "../motion/crashDetector.js";
 import { speak } from "../voice/elevenlabs.js";
-import type { EmergencyAlert, GeoPoint } from "../shared/types.js";
+import type { EmergencyAlert, EmergencyKind, GeoPoint } from "../shared/types.js";
 import { evaluateRisk } from "../api/guardian.js";
 import { config } from "../config.js";
 
 export class EmergencyService extends EventEmitter {
   private fallDetector = new FallDetector();
+  private crashDetector = new CrashDetector();
   public emergencyAlert: EmergencyAlert | null = null;
   public lastKnownLocation: GeoPoint | null = null;
   private isGuardianMode: () => boolean = () => false;
@@ -32,11 +34,17 @@ export class EmergencyService extends EventEmitter {
   reset() {
     this.emergencyAlert = null;
     this.fallDetector.resetCooldown();
+    this.crashDetector.resetCooldown();
   }
 
   processMotion(sample: MotionSample) {
     const fall = this.fallDetector.push(sample);
-    if (fall) this.triggerEmergency(fall);
+    if (fall) {
+      this.triggerFall(fall);
+      return;
+    }
+    const crash = this.crashDetector.pushMotion(sample);
+    if (crash) this.triggerCrash(crash);
   }
 
   updateLocation(geo: GeoPoint & { sessionId: string }) {
@@ -46,6 +54,8 @@ export class EmergencyService extends EventEmitter {
         longitude: geo.longitude,
         altitudeMeters: geo.altitudeMeters,
         horizontalAccuracyMeters: geo.horizontalAccuracyMeters,
+        speedMetersPerSecond: geo.speedMetersPerSecond ?? null,
+        courseDegrees: geo.courseDegrees ?? null,
         timestampMs: geo.timestampMs,
       };
 
@@ -53,59 +63,107 @@ export class EmergencyService extends EventEmitter {
         this.emergencyAlert = {
           ...this.emergencyAlert,
           location: this.lastKnownLocation,
-          message: this.emergencyMessage(
-            this.emergencyAlert.peakImpactG,
-            this.lastKnownLocation,
-            Boolean(this.emergencyAlert.guardianDistress ?? this.emergencyAlert.policeBackup),
-          ),
+          message: this.emergencyMessage(this.emergencyAlert, this.lastKnownLocation),
         };
         this.emit("emergency", this.emergencyAlert);
       }
     }
+
+    const crash = this.crashDetector.pushSpeed({
+      sessionId: geo.sessionId,
+      timestampMs: geo.timestampMs,
+      speedMetersPerSecond: geo.speedMetersPerSecond ?? null,
+    });
+    if (crash) this.triggerCrash(crash);
   }
 
   simulateFall(): EmergencyAlert {
     this.fallDetector.resetCooldown();
     const sessionId = this.relay.getSession()?.sessionId ?? "demo";
     const fall = this.fallDetector.simulate(sessionId);
-    return this.triggerEmergency(fall);
+    return this.triggerFall(fall);
+  }
+
+  simulateCrash(): EmergencyAlert {
+    this.crashDetector.resetCooldown();
+    const sessionId = this.relay.getSession()?.sessionId ?? "demo";
+    const crash = this.crashDetector.simulate(sessionId);
+    return this.triggerCrash(crash);
   }
 
   dismissEmergency(): void {
     this.fallDetector.resetCooldown();
+    this.crashDetector.resetCooldown();
     this.emergencyAlert = null;
     this.emit("emergency", null);
   }
 
-  private triggerEmergency(fall: FallEvent): EmergencyAlert {
+  private triggerFall(fall: FallEvent): EmergencyAlert {
+    return this.publishAlert({
+      kind: "fall",
+      sessionId: fall.sessionId,
+      triggeredAtMs: fall.triggeredAtMs,
+      peakImpactG: fall.peakImpactG,
+      freefallMs: fall.freefallMs,
+      reason: fall.reason,
+    });
+  }
+
+  private triggerCrash(crash: CrashEvent): EmergencyAlert {
+    return this.publishAlert({
+      kind: "crash",
+      sessionId: crash.sessionId,
+      triggeredAtMs: crash.triggeredAtMs,
+      peakImpactG: crash.peakImpactG,
+      freefallMs: 0,
+      peakSpeedMph: crash.peakSpeedMph,
+      decelerationMphPerSec: crash.decelerationMphPerSec,
+      reason: crash.reason,
+    });
+  }
+
+  private publishAlert(opts: {
+    kind: EmergencyKind;
+    sessionId: string;
+    triggeredAtMs: number;
+    peakImpactG: number;
+    freefallMs: number;
+    peakSpeedMph?: number;
+    decelerationMphPerSec?: number;
+    reason: string;
+  }): EmergencyAlert {
     const loc = this.resolvePhoneLocation();
     const guardianDistress = this.isGuardianMode();
     const alert: EmergencyAlert = {
       active: true,
       demo: true,
-      triggeredAtMs: fall.triggeredAtMs,
-      peakImpactG: fall.peakImpactG,
-      freefallMs: fall.freefallMs,
-      reason: fall.reason,
-      message: this.emergencyMessage(fall.peakImpactG, loc, guardianDistress),
+      kind: opts.kind,
+      triggeredAtMs: opts.triggeredAtMs,
+      peakImpactG: opts.peakImpactG,
+      freefallMs: opts.freefallMs,
+      peakSpeedMph: opts.peakSpeedMph,
+      decelerationMphPerSec: opts.decelerationMphPerSec,
+      reason: opts.reason,
+      message: "",
       location: loc,
       guardianDistress,
       policeBackup: guardianDistress,
     };
+    alert.message = this.emergencyMessage(alert, loc);
 
     this.emergencyAlert = alert;
 
     this.store.addEvent({
       type: "possible_emergency",
-      timestampMs: fall.triggeredAtMs,
-      sessionId: fall.sessionId,
+      timestampMs: opts.triggeredAtMs,
+      sessionId: opts.sessionId,
       severity: "critical",
       description: alert.message,
       location: loc,
     });
 
     console.warn(
-      `[emergency:demo] ${guardianDistress ? "guardian-distress" : "911"} ${fall.reason} peak=${fall.peakImpactG}g loc=${
+      `[emergency:demo] ${opts.kind} ${guardianDistress ? "guardian-distress" : "911"} ${opts.reason} peak=${opts.peakImpactG}g loc=${
         loc ? `${loc.latitude.toFixed(5)},${loc.longitude.toFixed(5)}` : "none"
       }`,
     );
@@ -113,38 +171,37 @@ export class EmergencyService extends EventEmitter {
     this.emit("emergency", alert);
     if (guardianDistress) {
       this.emit("guardian_responder_distress", {
-        peakImpactG: fall.peakImpactG,
+        peakImpactG: opts.peakImpactG,
         location: loc,
-        sessionId: fall.sessionId,
+        sessionId: opts.sessionId,
         alert,
       });
-      // Compat alias for any leftover listeners
       this.emit("police_officer_down", {
-        peakImpactG: fall.peakImpactG,
+        peakImpactG: opts.peakImpactG,
         location: loc,
-        sessionId: fall.sessionId,
+        sessionId: opts.sessionId,
         alert,
       });
     }
 
-    const impactScore = Math.min(100, Math.max(0, (fall.peakImpactG / 5.0) * 100));
+    const impactScore = Math.min(
+      100,
+      Math.max(
+        0,
+        opts.kind === "crash"
+          ? Math.max((opts.peakImpactG / 5.0) * 100, ((opts.peakSpeedMph ?? 25) / 60) * 100)
+          : (opts.peakImpactG / 5.0) * 100,
+      ),
+    );
     void evaluateRisk(
-      { timestampMs: fall.triggeredAtMs, impactScore },
+      { timestampMs: opts.triggeredAtMs, impactScore },
       undefined,
       `ans://v1.0.0.guardian.${config.ansTeamDomain}`,
     ).catch((err) =>
       console.error("[EmergencyService] Failed to evaluate risk with Guardian API:", err),
     );
 
-    void speak(
-      guardianDistress
-        ? loc
-          ? `SIGHTLINE guardian demo. Possible responder distress near ${loc.latitude.toFixed(3)}, ${loc.longitude.toFixed(3)}. This is a demonstration only.`
-          : "SIGHTLINE guardian demo. Possible responder distress. This is a demonstration only."
-        : loc
-          ? `SIGHTLINE demo alert. Possible fall detected near ${loc.latitude.toFixed(3)}, ${loc.longitude.toFixed(3)}. Contacting nine one one. This is a demonstration only.`
-          : "SIGHTLINE demo alert. Possible fall detected. Contacting nine one one. This is a demonstration only.",
-    ).then((voice) => this.emit("voice", voice));
+    void speak(this.voiceLine(alert, loc)).then((voice) => this.emit("voice", voice));
 
     return alert;
   }
@@ -166,7 +223,21 @@ export class EmergencyService extends EventEmitter {
     return withGeo[0]?.lastLocation ?? null;
   }
 
-  private emergencyMessage(peakG: number, loc: GeoPoint | null, guardianDistress: boolean): string {
+  private emergencyMessage(alert: EmergencyAlert, loc: GeoPoint | null): string {
+    const guardianDistress = Boolean(alert.guardianDistress ?? alert.policeBackup);
+    if (alert.kind === "crash") {
+      const spd = alert.peakSpeedMph != null ? `${alert.peakSpeedMph} mph` : "high speed";
+      if (guardianDistress) {
+        return loc
+          ? `Possible vehicle crash after ${spd}. DEMO: would escalate with location ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}. No real dispatch.`
+          : `Possible vehicle crash after ${spd}. DEMO: would escalate — waiting for phone GPS. No real dispatch.`;
+      }
+      return loc
+        ? `Possible vehicle crash after ${spd}. DEMO: would contact 911 at ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}. No real call is placed.`
+        : `Possible vehicle crash after ${spd}. DEMO: would contact 911 — waiting for phone GPS fix. No real call is placed.`;
+    }
+
+    const peakG = alert.peakImpactG;
     if (guardianDistress) {
       if (loc) {
         return `Possible responder distress / impact ${peakG}g. DEMO: would escalate with location ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}. No real dispatch.`;
@@ -181,5 +252,26 @@ export class EmergencyService extends EventEmitter {
       return `Possible hard fall detected (${peakG}g). DEMO: would contact 911 at ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}${acc}. No real call is placed.`;
     }
     return `Possible hard fall detected (${peakG}g). DEMO: would contact 911 — waiting for phone GPS fix. No real call is placed.`;
+  }
+
+  private voiceLine(alert: EmergencyAlert, loc: GeoPoint | null): string {
+    const guardianDistress = Boolean(alert.guardianDistress ?? alert.policeBackup);
+    const near = loc
+      ? ` near ${loc.latitude.toFixed(3)}, ${loc.longitude.toFixed(3)}`
+      : "";
+    if (alert.kind === "crash") {
+      const spd =
+        alert.peakSpeedMph != null ? ` after ${Math.round(alert.peakSpeedMph)} miles per hour` : "";
+      return guardianDistress
+        ? `SIGHTLINE guardian demo. Possible vehicle crash${spd}${near}. This is a demonstration only.`
+        : `SIGHTLINE demo alert. Possible vehicle crash detected${spd}${near}. Contacting nine one one. This is a demonstration only.`;
+    }
+    return guardianDistress
+      ? loc
+        ? `SIGHTLINE guardian demo. Possible responder distress near ${loc.latitude.toFixed(3)}, ${loc.longitude.toFixed(3)}. This is a demonstration only.`
+        : "SIGHTLINE guardian demo. Possible responder distress. This is a demonstration only."
+      : loc
+        ? `SIGHTLINE demo alert. Possible fall detected near ${loc.latitude.toFixed(3)}, ${loc.longitude.toFixed(3)}. Contacting nine one one. This is a demonstration only.`
+        : "SIGHTLINE demo alert. Possible fall detected. Contacting nine one one. This is a demonstration only.";
   }
 }

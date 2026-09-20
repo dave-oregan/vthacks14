@@ -5,6 +5,9 @@ export interface GeoPoint {
   longitude: number;
   altitudeMeters?: number | null;
   horizontalAccuracyMeters?: number | null;
+  /** CoreLocation speed in m/s when available (≥ 0). */
+  speedMetersPerSecond?: number | null;
+  courseDegrees?: number | null;
   timestampMs: number;
 }
 
@@ -126,12 +129,19 @@ export interface SessionSnapshot {
   updatedAtMs: number;
 }
 
+export type EmergencyKind = "fall" | "crash";
+
 export interface EmergencyAlert {
   active: boolean;
   demo: true;
+  kind: EmergencyKind;
   triggeredAtMs: number;
   peakImpactG: number;
   freefallMs: number;
+  /** Pre-crash speed peak (mph), when kind === "crash". */
+  peakSpeedMph?: number;
+  /** Average deceleration (mph/s) across the crash window. */
+  decelerationMphPerSec?: number;
   reason: string;
   message: string;
   location?: GeoPoint | null;

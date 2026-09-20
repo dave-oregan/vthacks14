@@ -22,6 +22,7 @@ export function App() {
     verifyAgent,
     simulateUnknown,
     simulateFall,
+    simulateCrash,
     dismissEmergency,
     resetDemo,
     setGuardianMode,
@@ -121,7 +122,7 @@ export function App() {
 
   async function run(name: string, fn: () => Promise<unknown>) {
     // Unlock browser audio inside the click stack so TTS that arrives later can play.
-    if (name === "fall" || name === "recall" || name === "pick" || name === "gquery") {
+    if (name === "fall" || name === "crash" || name === "recall" || name === "pick" || name === "gquery") {
       unlockAudio();
     }
     setBusy(name);
@@ -247,6 +248,14 @@ export function App() {
               }
             >
               {guardianMode ? "Simulate Distress" : "Simulate Fall"}
+            </button>
+            <button
+              className="btn danger"
+              onClick={() => run("crash", simulateCrash)}
+              disabled={!!busy}
+              title="Demo: high speed then rapid deceleration — does not call 911"
+            >
+              Simulate Crash
             </button>
             <button className="btn" onClick={() => run("reset", resetDemo)} disabled={!!busy}>
               Reset

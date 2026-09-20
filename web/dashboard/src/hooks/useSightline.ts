@@ -50,9 +50,12 @@ export type DashState = {
   emergencyAlert?: {
     active: boolean;
     demo: true;
+    kind?: "fall" | "crash";
     triggeredAtMs: number;
     peakImpactG: number;
     freefallMs: number;
+    peakSpeedMph?: number;
+    decelerationMphPerSec?: number;
     reason: string;
     message: string;
     location?: { latitude: number; longitude: number } | null;
@@ -290,6 +293,27 @@ export function useSightline() {
     }
   }
 
+  async function simulateCrash() {
+    const res = await fetch("/api/demo/crash", { method: "POST" });
+    const data = (await res.json()) as { alert?: DashState["emergencyAlert"] };
+    if (data.alert) {
+      setState((prev) => {
+        if (!prev) return prev;
+        const loc =
+          data.alert?.location ??
+          prev.session?.lastLocation ??
+          null;
+        const alert = data.alert
+          ? {
+              ...data.alert,
+              location: loc,
+            }
+          : null;
+        return { ...prev, emergencyAlert: alert, mode: "EMERGENCY" };
+      });
+    }
+  }
+
   async function dismissEmergency() {
     await fetch("/api/emergency/dismiss", { method: "POST" });
     setState((prev) =>
@@ -418,6 +442,7 @@ export function useSightline() {
     verifyAgent,
     simulateUnknown,
     simulateFall,
+    simulateCrash,
     dismissEmergency,
     resetDemo,
     setGuardianMode,

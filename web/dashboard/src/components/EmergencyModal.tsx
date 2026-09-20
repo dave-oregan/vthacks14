@@ -1,9 +1,12 @@
 export type EmergencyAlert = {
   active: boolean;
   demo: true;
+  kind?: "fall" | "crash";
   triggeredAtMs: number;
   peakImpactG: number;
   freefallMs: number;
+  peakSpeedMph?: number;
+  decelerationMphPerSec?: number;
   reason: string;
   message: string;
   location?: { latitude: number; longitude: number } | null;
@@ -20,6 +23,7 @@ export function EmergencyModal({
 }) {
   if (!alert.active) return null;
   const guardian = Boolean(alert.guardianDistress ?? alert.policeBackup);
+  const isCrash = alert.kind === "crash";
   const hasLoc =
     alert.location != null &&
     Number.isFinite(alert.location.latitude) &&
@@ -27,6 +31,28 @@ export function EmergencyModal({
   const loc = hasLoc
     ? `${alert.location!.latitude.toFixed(5)}, ${alert.location!.longitude.toFixed(5)}`
     : "waiting for phone GPS…";
+
+  const title = guardian
+    ? isCrash
+      ? "Possible vehicle crash (responder)"
+      : "Possible responder distress"
+    : isCrash
+      ? "Possible crash detected"
+      : "Possible fall detected";
+
+  const subtitle = guardian
+    ? "SIGHTLINE surfaces the observation — humans decide next steps"
+    : isCrash
+      ? "High speed then rapid deceleration — SIGHTLINE would contact 911"
+      : "SIGHTLINE would contact 911 with last-known phone location";
+
+  const impactLine = isCrash
+    ? `${alert.peakSpeedMph ?? "—"} mph` +
+      (alert.decelerationMphPerSec
+        ? ` · −${alert.decelerationMphPerSec} mph/s`
+        : "") +
+      (alert.peakImpactG > 0 ? ` · ${alert.peakImpactG}g` : "")
+    : `${alert.peakImpactG}g · freefall ${alert.freefallMs}ms`;
 
   return (
     <div className="modal-backdrop emergency-backdrop" role="alertdialog" aria-modal="true">
@@ -38,14 +64,8 @@ export function EmergencyModal({
         </div>
         <div className="modal-header">
           <div>
-            <div className="emergency-title">
-              {guardian ? "Possible responder distress" : "Possible fall detected"}
-            </div>
-            <div className="modal-sub">
-              {guardian
-                ? "SIGHTLINE surfaces the observation — humans decide next steps"
-                : "SIGHTLINE would contact 911 with last-known phone location"}
-            </div>
+            <div className="emergency-title">{title}</div>
+            <div className="modal-sub">{subtitle}</div>
           </div>
         </div>
         <div className="stack" style={{ gap: 10 }}>
@@ -56,10 +76,8 @@ export function EmergencyModal({
             </span>
           </div>
           <div className="row">
-            <span className="k">Impact</span>
-            <span className="v">
-              {alert.peakImpactG}g · freefall {alert.freefallMs}ms
-            </span>
+            <span className="k">{isCrash ? "Kinematics" : "Impact"}</span>
+            <span className="v">{impactLine}</span>
           </div>
           <div className="row">
             <span className="k">{guardian ? "Responder location" : "Phone location"}</span>
