@@ -354,6 +354,7 @@ const RECALL_STOPWORDS = new Set([
   "where","is","my","the","a","an","did","i","leave","find","last","seen","at",
   "of","to","me","was","are","what","which","please","show","recall","locate",
   "for","and","or","in","on","with","you","see","do","have","put","it",
+  "who","whos","whose","whats","tell","about","say","said","again","that","this",
 ]);
 
 function escapeRegex(t: string): string {
@@ -442,6 +443,59 @@ export async function searchObjectsInAtlas(query: string): Promise<AtlasRecallHi
   } catch (err) {
     note("events", err);
     return null;
+  }
+}
+
+export interface TranscriptHit {
+  text: string;
+  timestampMs: number;
+  source: string | null;
+  direction: string;
+  matchedTokens: number;
+}
+
+/**
+ * Search what the wearer actually SAID.
+ *
+ * Object recall only covers things the camera saw. A spoken fact - "my name is
+ * Bob" - lives in the transcripts collection and was previously unreachable
+ * from recall, so asking "who is Bob?" found nothing. This closes that gap.
+ */
+export async function searchTranscriptsInAtlas(
+  query: string,
+  limit = 5,
+): Promise<TranscriptHit[] | null> {
+  if (!db) return null;
+  const tokens = recallTokens(query);
+  if (tokens.length === 0) return [];
+  try {
+    const ors = tokens.map((t) => ({
+      text: { $regex: `\\b${escapeRegex(t)}`, $options: "i" },
+    }));
+    const docs = await db
+      .collection("transcripts")
+      .find({ direction: "heard", $or: ors })
+      .sort({ timestampMs: -1 })
+      .limit(40)
+      .toArray();
+
+    const hits = docs.map((d) => {
+      const text = String(d.text ?? "");
+      return {
+        text,
+        timestampMs: Number(d.timestampMs ?? 0),
+        source: (d.source as string) ?? null,
+        direction: String(d.direction ?? "heard"),
+        matchedTokens: tokens.filter((t) =>
+          new RegExp(`\\b${escapeRegex(t)}`, "i").test(text),
+        ).length,
+      };
+    });
+    hits.sort((a, b) => b.matchedTokens - a.matchedTokens || b.timestampMs - a.timestampMs);
+    return hits.slice(0, limit);
+  } catch (err) {
+    note("transcripts", err);
+    return [];
   }
 }
 

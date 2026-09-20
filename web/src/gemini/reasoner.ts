@@ -1,7 +1,7 @@
 import { generateWithFallback, hasGemini } from "./client.js";
 import { formatObjectPhrase, type MemoryStore } from "../memory/store.js";
 import type { MemoryObject } from "../shared/types.js";
-import { searchObjectsInAtlas } from "../memory/db.js";
+import { searchObjectsInAtlas, searchTranscriptsInAtlas } from "../memory/db.js";
 
 export type RecallMatch = {
   id: string;
@@ -60,6 +60,22 @@ export async function answerRecallQuery(
   }
 
   const uniqueHits = [...new Map(hits.map((h) => [h.id, h])).values()];
+
+  // Nothing the camera SAW matches - but the wearer may have SAID it.
+  // "my name is Bob" lives in transcripts, not in the object memory.
+  if (uniqueHits.length === 0) {
+    const spoken = await searchTranscriptsInAtlas(query);
+    const best = spoken?.find((h) => h.matchedTokens > 0);
+    if (best) {
+      console.log(`[recall] "${query.trim()}" -> answered from a TRANSCRIPT`);
+      return {
+        text: `You said "${best.text}" ${describeAgo(best.timestampMs)}.`,
+        query,
+        needsChoice: false,
+        matches: [],
+      };
+    }
+  }
   console.log(
     `[recall] "${query.trim()}" -> ${uniqueHits.length} match(es) served by ${servedBy.toUpperCase()}`,
   );
@@ -163,4 +179,15 @@ export async function interpretMissionIntent(utterance: string): Promise<{
     return { intent: "recall", target: m?.[0]?.trim() ?? utterance };
   }
   return { intent: "none" };
+}
+
+/** "2 minutes ago", "just now" - for reading a transcript back aloud. */
+function describeAgo(timestampMs: number): string {
+  const secs = Math.max(0, Math.round((Date.now() - timestampMs) / 1000));
+  if (secs < 15) return "just now";
+  if (secs < 90) return `${secs} seconds ago`;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hrs = Math.round(mins / 60);
+  return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
 }

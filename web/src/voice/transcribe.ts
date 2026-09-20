@@ -35,17 +35,17 @@ export interface TranscriberEvents {
 }
 
 /** Silence this long ends an utterance. */
-const SILENCE_HANGOVER_MS = 800;
+const SILENCE_HANGOVER_MS = 1100;
 /** Ignore bursts shorter than this - a cough, a chair scrape. */
-const MIN_UTTERANCE_MS = 450;
+const MIN_UTTERANCE_MS = 280;
 /** Force a flush so a monologue still gets transcribed. */
 const MAX_UTTERANCE_MS = 14_000;
 /** Keep this much audio before speech starts, so the first word isn't clipped. */
-const PREROLL_MS = 300;
+const PREROLL_MS = 450;
 /** Absolute floor - below this we never call it speech, however quiet the room. */
-const ABSOLUTE_RMS_FLOOR = 180;
+const ABSOLUTE_RMS_FLOOR = 130;
 /** Speech must exceed the rolling noise floor by this factor. */
-const SPEECH_MULTIPLIER = 2.6;
+const SPEECH_MULTIPLIER = 2.0;
 
 function rms16(pcm: Buffer): number {
   const n = Math.floor(pcm.length / 2);
@@ -173,6 +173,9 @@ export class SpeechTranscriber extends EventEmitter {
    */
   private audioClockMs = 0;
   private startedAtWallMs = 0;
+  /** Pre-roll milliseconds sitting at the FRONT of `buffered`. The trailing
+   *  trim must account for this or it cuts real speech off the end. */
+  private prerollMsIncluded = 0;
   private preroll: Buffer[] = [];
   private prerollBytes = 0;
   private capturing = false;
@@ -249,6 +252,8 @@ export class SpeechTranscriber extends EventEmitter {
         this.lastVoiceAtMs = now;
         this.speechEndedAtMs = now;
         this.buffered = [...this.preroll];
+        this.prerollMsIncluded =
+          this.prerollBytes / ((this.sampleRate * this.channels * 2) / 1000);
         this.preroll = [];
         this.prerollBytes = 0;
         this.emit("listening", { speaking: true, source: this.source });
@@ -319,8 +324,13 @@ export class SpeechTranscriber extends EventEmitter {
 
     // Trim most of the trailing silence, keeping a little tail so the last
     // consonant survives. Smaller upload, faster transcription.
-    const keepTailMs = 250;
-    const keepBytes = Math.ceil((speechMs + keepTailMs) * bytesPerMs);
+    // `buffered` begins with pre-roll captured BEFORE startedAtMs, so the
+    // window we keep is preroll + speech + tail. Omitting the pre-roll here
+    // silently chopped ~300ms off the end of every utterance - the last word.
+    const keepTailMs = 400;
+    const keepBytes = Math.ceil(
+      (this.prerollMsIncluded + speechMs + keepTailMs) * bytesPerMs,
+    );
     if (keepBytes < pcm.length) pcm = pcm.subarray(0, keepBytes);
 
     const durationMs = Math.round(pcm.length / bytesPerMs);
