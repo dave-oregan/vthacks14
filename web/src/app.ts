@@ -115,6 +115,7 @@ export class SightlineApp extends EventEmitter {
     );
 
     this.policeService.on("alerts", () => this.broadcast(true));
+    this.policeService.on("status", () => this.broadcast());
 
     this.emergencyService.on("emergency", (alert) => {
       this.mode = alert ? "EMERGENCY" : this.relay.getSession()?.connected ? "LIVE" : "STANDBY";
@@ -208,6 +209,15 @@ export class SightlineApp extends EventEmitter {
     return { cocoFallback: this.cocoFallbackEnabled };
   }
 
+  setBackupThreshold(threshold: number): { backupThreshold: number; policeStatus: ReturnType<PoliceService["getStatus"]> } {
+    this.policeService.setBackupThreshold(threshold);
+    this.broadcast(true);
+    return {
+      backupThreshold: this.policeService.getBackupThreshold(),
+      policeStatus: this.policeService.getStatus(),
+    };
+  }
+
   dismissSideAlert(id: string): void {
     this.policeService.dismiss(id);
   }
@@ -224,6 +234,36 @@ export class SightlineApp extends EventEmitter {
     timestampMs?: number,
   ): Promise<{ count: number }> {
     this.mode = "LIVE";
+
+    // Police mode: browser only feeds people for fast crowd tracking — never overwrite LA.
+    if (this.policeService.isEnabled()) {
+      const people = (raw ?? [])
+        .filter(
+          (d) =>
+            d &&
+            d.bbox &&
+            typeof d.label === "string" &&
+            /\b(person|people|crowd|pedestrian)\b/i.test(String(d.label)),
+        )
+        .map((d, index) => ({
+          trackId: d.trackId || `crowd-${index}`,
+          label: String(d.label).toLowerCase(),
+          displayName: String(d.displayName || d.label),
+          descriptors: Array.isArray(d.descriptors) ? d.descriptors.map(String) : [String(d.label)],
+          confidence: Number(d.confidence ?? 0.5),
+          bbox: {
+            x: Number(d.bbox!.x),
+            y: Number(d.bbox!.y),
+            width: Number(d.bbox!.width),
+            height: Number(d.bbox!.height),
+          },
+          source: "coco" as const,
+        }));
+      this.policeService.ingestCrowdHint(people);
+      this.broadcast();
+      return { count: people.length };
+    }
+
     return this.visionService.ingestClientDetections(raw, timestampMs);
   }
 
@@ -328,6 +368,7 @@ export class SightlineApp extends EventEmitter {
       policeMode: this.policeService.isEnabled(),
       cocoFallback: this.cocoFallbackEnabled,
       sideAlerts: this.policeService.getAlerts(),
+      policeStatus: this.policeService.getStatus(),
     };
   }
 

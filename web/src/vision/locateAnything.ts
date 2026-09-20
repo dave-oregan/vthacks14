@@ -31,7 +31,7 @@ const DEFAULT_CATEGORIES = [
   "umbrella",
 ];
 
-/** Extra LocateAnything classes when Police mode is on. */
+/** LocateAnything classes when Police mode is on — weapons / people / hostility cues only. */
 export const POLICE_CATEGORIES = [
   "gun",
   "handgun",
@@ -41,22 +41,20 @@ export const POLICE_CATEGORIES = [
   "weapon",
   "knife",
   "blade",
-  "license plate",
-  "car",
+  "machete",
   "person",
+  "crowd",
+  "group of people",
+  "fist",
+  "fighting",
+  "punching",
+  "raised fist",
+  "license plate",
 ];
 
 export function getDetectCategories(policeMode: boolean): string[] {
   if (!policeMode) return DEFAULT_CATEGORIES;
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const c of [...POLICE_CATEGORIES, ...DEFAULT_CATEGORIES]) {
-    const key = c.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(c);
-  }
-  return out;
+  return [...POLICE_CATEGORIES];
 }
 
 export function hasLocateAnything(): boolean {

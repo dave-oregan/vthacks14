@@ -103,6 +103,12 @@ export function createApiRouter(app: SightlineApp) {
     res.json(app.setCocoFallback(enabled));
   });
 
+  router.post("/mode/backup-threshold", (req, res) => {
+    const raw = Number(req.body?.threshold ?? req.body?.backupThreshold ?? 0.55);
+    const threshold = Number.isFinite(raw) ? raw : 0.55;
+    res.json(app.setBackupThreshold(threshold > 1 ? threshold / 100 : threshold));
+  });
+
   router.post("/alerts/dismiss", (req, res) => {
     const id = String(req.body?.id ?? "");
     if (id) app.dismissSideAlert(id);

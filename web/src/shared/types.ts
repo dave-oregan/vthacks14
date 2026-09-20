@@ -179,4 +179,16 @@ export interface DashboardState {
   policeMode: boolean;
   cocoFallback: boolean;
   sideAlerts: SideAlert[];
+  policeStatus: {
+    dangerLevel: number;
+    dangerLabel: string;
+    topThreat: string | null;
+    topConfidence: number;
+    backupThreshold: number;
+    backupArmed: boolean;
+    groupCount: number;
+    largeGroup: boolean;
+    hostility: number;
+    hostilityLabel: string;
+  };
 }

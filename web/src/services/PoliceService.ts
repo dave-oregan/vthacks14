@@ -6,15 +6,43 @@ import type { Detection, GeoPoint, SideAlert } from "../shared/types.js";
 
 const WEAPON_RE = /\b(gun|handgun|pistol|rifle|firearm|weapon|knife|blade|machete)\b/i;
 const PLATE_RE = /\b(license\s*plate|number\s*plate|licence\s*plate|plate)\b/i;
+const PERSON_RE = /\b(person|people|crowd|pedestrian|human)\b/i;
+const HOSTILE_RE =
+  /\b(fight|fighting|punch|punching|fist|raised\s*fist|aggressive|hostile|assault|attack|scuffle|brawl)\b/i;
 
+/** People count at/above this = large group. */
+const LARGE_GROUP_MIN = 5;
 /** Cooldown so the same threat/plate doesn't spam the stack. */
 const ALERT_COOLDOWN_MS = 12_000;
+
+export type PoliceStatus = {
+  dangerLevel: number; // 0..100
+  dangerLabel: string;
+  topThreat: string | null;
+  topConfidence: number;
+  backupThreshold: number; // 0..1
+  backupArmed: boolean;
+  groupCount: number;
+  largeGroup: boolean;
+  hostility: number; // 0..100
+  hostilityLabel: string;
+};
 
 export class PoliceService extends EventEmitter {
   private enabled = false;
   private alerts: SideAlert[] = [];
   private lastKeyAt = new Map<string, number>();
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
+  /** Min weapon confidence (0–1) required to recommend / call backup. */
+  private backupThreshold = 0.55;
+  private dangerLevel = 0;
+  private dangerLabel = "Clear";
+  private topThreat: string | null = null;
+  private topConfidence = 0;
+  private groupCount = 0;
+  private largeGroup = false;
+  private hostility = 0;
+  private hostilityLabel = "Calm";
 
   constructor(private store: MemoryStore) {
     super();
@@ -30,8 +58,34 @@ export class PoliceService extends EventEmitter {
     if (!on) {
       this.alerts = [];
       this.lastKeyAt.clear();
+      this.resetMeter();
       this.emit("alerts", this.alerts);
+      this.emit("status", this.getStatus());
     }
+  }
+
+  setBackupThreshold(threshold: number): void {
+    this.backupThreshold = Math.min(0.95, Math.max(0.2, threshold));
+    this.emit("status", this.getStatus());
+  }
+
+  getBackupThreshold(): number {
+    return this.backupThreshold;
+  }
+
+  getStatus(): PoliceStatus {
+    return {
+      dangerLevel: this.dangerLevel,
+      dangerLabel: this.dangerLabel,
+      topThreat: this.topThreat,
+      topConfidence: this.topConfidence,
+      backupThreshold: this.backupThreshold,
+      backupArmed: this.topConfidence >= this.backupThreshold && this.dangerLevel >= 40,
+      groupCount: this.groupCount,
+      largeGroup: this.largeGroup,
+      hostility: this.hostility,
+      hostilityLabel: this.hostilityLabel,
+    };
   }
 
   getAlerts(): SideAlert[] {
@@ -42,7 +96,10 @@ export class PoliceService extends EventEmitter {
     this.enabled = false;
     this.alerts = [];
     this.lastKeyAt.clear();
+    this.backupThreshold = 0.55;
+    this.resetMeter();
     this.emit("alerts", this.alerts);
+    this.emit("status", this.getStatus());
   }
 
   dismiss(id: string): void {
@@ -56,7 +113,26 @@ export class PoliceService extends EventEmitter {
   }
 
   /**
-   * Scan detections while Police mode is on — weapons, plates, backup recommend.
+   * Fast crowd hint from browser COCO (people only) — updates group meter
+   * without clobbering LocateAnything weapon boxes.
+   */
+  ingestCrowdHint(people: Detection[]): void {
+    if (!this.enabled) return;
+    const count = countDistinctPeople(people.filter((d) => PERSON_RE.test(nameOf(d))));
+    if (count === 0 && this.groupCount === 0) return;
+    // Prefer the higher of LA vs browser people counts for the frame.
+    this.groupCount = Math.max(this.groupCount, count);
+    this.largeGroup = this.groupCount >= LARGE_GROUP_MIN;
+    if (this.largeGroup && this.dangerLabel === "Clear") this.dangerLabel = "Monitor";
+    if (this.largeGroup) {
+      this.dangerLevel = Math.max(this.dangerLevel, 28 + Math.min(20, (this.groupCount - LARGE_GROUP_MIN) * 3));
+    }
+    this.emit("status", this.getStatus());
+  }
+
+  /**
+   * Scan detections while Police mode is on — weapons, groups, hostility, plates.
+   * Non-weapon clutter (phones, bottles, etc.) is ignored.
    */
   async ingestDetections(
     jpeg: Buffer,
@@ -64,11 +140,15 @@ export class PoliceService extends EventEmitter {
     location: GeoPoint | null,
     sessionId: string,
   ): Promise<void> {
-    if (!this.enabled || detections.length === 0) return;
+    if (!this.enabled) return;
 
-    const weapons = detections.filter((d) => WEAPON_RE.test(`${d.label} ${d.displayName}`));
-    const plates = detections.filter((d) => PLATE_RE.test(`${d.label} ${d.displayName}`));
-    const people = detections.filter((d) => /\bperson\b/i.test(d.label));
+    const weapons = detections.filter((d) => WEAPON_RE.test(nameOf(d)));
+    const plates = detections.filter((d) => PLATE_RE.test(nameOf(d)));
+    const people = detections.filter((d) => PERSON_RE.test(nameOf(d)));
+    const hostileCues = detections.filter((d) => HOSTILE_RE.test(nameOf(d)));
+
+    this.updateDangerMeter(weapons, plates, people, hostileCues);
+    this.emit("status", this.getStatus());
 
     for (const w of weapons) {
       const key = `weapon:${normalizeThreatKey(w)}`;
@@ -78,7 +158,7 @@ export class PoliceService extends EventEmitter {
         kind: "danger_weapon",
         severity: "critical",
         title: "Weapon in view",
-        message: `${prettyLabel(w)} detected — recommend calling backup if not already on scene.`,
+        message: `${prettyLabel(w)} · ${Math.round(w.confidence * 100)}% confidence.`,
         ttlMs: 14_000,
         thumbBase64: thumb?.toString("base64") ?? null,
         label: w.displayName || w.label,
@@ -92,6 +172,47 @@ export class PoliceService extends EventEmitter {
         description: `Police mode: weapon sighted (${w.displayName || w.label})`,
         location,
       });
+    }
+
+    if (this.largeGroup) {
+      const key = `group:${this.groupCount}`;
+      if (this.canFire(key)) {
+        this.pushAlert({
+          kind: "info",
+          severity: "warn",
+          title: "Large group",
+          message: `${this.groupCount} people in frame — track crowd dynamics.`,
+          ttlMs: 14_000,
+          location,
+        });
+        this.store.addEvent({
+          type: "alerted",
+          timestampMs: Date.now(),
+          sessionId,
+          severity: "warn",
+          description: `Police mode: large group (${this.groupCount})`,
+          location,
+        });
+      }
+    }
+
+    if (this.hostility >= 55) {
+      const key = `hostility:${this.hostilityLabel}`;
+      if (this.canFire(key)) {
+        this.pushAlert({
+          kind: "backup_recommend",
+          severity: this.hostility >= 75 ? "critical" : "warn",
+          title: `Hostility · ${this.hostilityLabel}`,
+          message:
+            this.hostilityLabel === "Armed confrontation"
+              ? "Weapon + person cues — advise backup if not already on scene."
+              : hostileCues[0]
+                ? `${prettyLabel(hostileCues[0])} detected · hostility ${this.hostility}.`
+                : `Crowd/aggression heuristics · hostility ${this.hostility}.`,
+          ttlMs: 16_000,
+          location,
+        });
+      }
     }
 
     for (const p of plates) {
@@ -119,38 +240,31 @@ export class PoliceService extends EventEmitter {
         label: "license plate",
         location,
       });
-      this.store.addEvent({
-        type: "object_seen",
-        timestampMs: Date.now(),
-        sessionId,
-        severity: "info",
-        description: "Police mode: license plate captured",
-        location,
-      });
     }
 
-    // Person + weapon in the same frame → recommend backup (if not already weapon-alerted heavily)
-    if (weapons.length > 0 && people.length > 0) {
-      const key = "backup:person+weapon";
+    const maxWeaponConf = weapons.reduce((m, w) => Math.max(m, w.confidence), 0);
+    const shouldBackup =
+      maxWeaponConf >= this.backupThreshold &&
+      (people.length > 0 ||
+        weapons.length >= 2 ||
+        this.hostility >= 70 ||
+        maxWeaponConf >= this.backupThreshold + 0.1);
+
+    if (shouldBackup && weapons.length > 0) {
+      const key = "backup:threshold";
       if (this.canFire(key)) {
+        const top = weapons.slice().sort((a, b) => b.confidence - a.confidence)[0]!;
         this.pushAlert({
           kind: "backup_recommend",
           severity: "critical",
-          title: "Recommend backup",
-          message: `Person and ${prettyLabel(weapons[0]!)} in frame — advise additional units.`,
-          ttlMs: 16_000,
-          location,
-        });
-      }
-    } else if (weapons.length >= 2) {
-      const key = "backup:multi-weapon";
-      if (this.canFire(key)) {
-        this.pushAlert({
-          kind: "backup_recommend",
-          severity: "critical",
-          title: "Recommend backup",
-          message: "Multiple weapons in view — advise additional units.",
-          ttlMs: 16_000,
+          title: "Request backup",
+          message:
+            `${prettyLabel(top)} at ${Math.round(top.confidence * 100)}% ` +
+            `(threshold ${Math.round(this.backupThreshold * 100)}%)` +
+            (people.length ? ` · ${people.length} person(s)` : "") +
+            (this.largeGroup ? " · large group" : "") +
+            `. Hostility ${this.hostilityLabel}. DEMO: would advise units.`,
+          ttlMs: 18_000,
           location,
         });
       }
@@ -163,6 +277,14 @@ export class PoliceService extends EventEmitter {
     location: GeoPoint | null;
     sessionId: string;
   }): SideAlert {
+    this.dangerLevel = 100;
+    this.dangerLabel = "Officer down";
+    this.topThreat = "officer down";
+    this.topConfidence = 1;
+    this.hostility = 100;
+    this.hostilityLabel = "Officer down";
+    this.emit("status", this.getStatus());
+
     const locLine = opts.location
       ? `${opts.location.latitude.toFixed(5)}, ${opts.location.longitude.toFixed(5)}`
       : "GPS pending";
@@ -183,6 +305,76 @@ export class PoliceService extends EventEmitter {
       location: opts.location,
     });
     return alert;
+  }
+
+  private resetMeter(): void {
+    this.dangerLevel = 0;
+    this.dangerLabel = "Clear";
+    this.topThreat = null;
+    this.topConfidence = 0;
+    this.groupCount = 0;
+    this.largeGroup = false;
+    this.hostility = 0;
+    this.hostilityLabel = "Calm";
+  }
+
+  private updateDangerMeter(
+    weapons: Detection[],
+    plates: Detection[],
+    people: Detection[],
+    hostileCues: Detection[],
+  ): void {
+    const maxW = weapons.reduce((m, w) => Math.max(m, w.confidence), 0);
+    const top = weapons.slice().sort((a, b) => b.confidence - a.confidence)[0];
+    this.topThreat = top
+      ? prettyLabel(top)
+      : hostileCues[0]
+        ? prettyLabel(hostileCues[0])
+        : plates[0]
+          ? "license plate"
+          : null;
+    this.topConfidence =
+      top?.confidence ?? hostileCues[0]?.confidence ?? plates[0]?.confidence ?? 0;
+
+    // Group: unique-ish people by spatial separation
+    this.groupCount = countDistinctPeople(people);
+    this.largeGroup = this.groupCount >= LARGE_GROUP_MIN;
+
+    // Hostility heuristic (no dedicated model — cue labels + weapon/person context)
+    let hostility = 0;
+    if (hostileCues.length) {
+      const maxH = hostileCues.reduce((m, d) => Math.max(m, d.confidence), 0);
+      hostility += 40 + maxH * 35;
+    }
+    if (weapons.length && people.length) hostility += 35 + maxW * 20;
+    if (weapons.length >= 2) hostility += 15;
+    if (this.largeGroup && weapons.length) hostility += 20;
+    else if (this.largeGroup) hostility += 10;
+    // Dense cluster of people → agitation risk
+    const clusterTightness = averagePairIoU(people);
+    if (people.length >= 3 && clusterTightness > 0.05) hostility += 12;
+
+    this.hostility = Math.min(100, Math.round(hostility));
+    if (this.hostility >= 80) this.hostilityLabel = "Armed confrontation";
+    else if (this.hostility >= 55) this.hostilityLabel = "Elevated";
+    else if (this.hostility >= 30) this.hostilityLabel = "Tense";
+    else this.hostilityLabel = "Calm";
+
+    let score = 0;
+    if (weapons.length) score += 35 + maxW * 40;
+    if (weapons.length >= 2) score += 15;
+    if (weapons.length && people.length) score += 20;
+    if (this.largeGroup) score += 12 + Math.min(15, (this.groupCount - LARGE_GROUP_MIN) * 3);
+    score += this.hostility * 0.25;
+    if (plates.length) score += 5;
+    this.dangerLevel = Math.min(100, Math.round(score));
+
+    if (this.dangerLevel >= 85) this.dangerLabel = "Critical";
+    else if (this.dangerLevel >= 60) this.dangerLabel = "Elevated";
+    else if (this.dangerLevel >= 30) this.dangerLabel = "Caution";
+    else if (this.largeGroup) this.dangerLabel = "Monitor";
+    else if (plates.length) this.dangerLabel = "Monitor";
+    else this.dangerLabel = "Clear";
   }
 
   private pushAlert(
@@ -225,11 +417,63 @@ export class PoliceService extends EventEmitter {
   }
 }
 
+function nameOf(d: Detection): string {
+  return `${d.label} ${d.displayName}`;
+}
+
 function prettyLabel(d: Detection): string {
-  return (d.displayName || d.label || "weapon").trim();
+  return (d.displayName || d.label || "threat").trim();
 }
 
 function normalizeThreatKey(d: Detection): string {
   const label = (d.label || "").toLowerCase().replace(/\s+/g, "_");
   return `${label}:${Math.round(d.bbox.x * 10)}:${Math.round(d.bbox.y * 10)}`;
+}
+
+function countDistinctPeople(people: Detection[]): number {
+  if (people.length === 0) return 0;
+  const kept: Detection[] = [];
+  for (const p of people.slice().sort((a, b) => b.confidence - a.confidence)) {
+    const dup = kept.some(
+      (k) =>
+        Math.abs(k.bbox.x - p.bbox.x) < 0.08 &&
+        Math.abs(k.bbox.y - p.bbox.y) < 0.08 &&
+        Math.abs(k.bbox.width - p.bbox.width) < 0.12,
+    );
+    if (!dup) kept.push(p);
+  }
+  return kept.length;
+}
+
+function averagePairIoU(people: Detection[]): number {
+  if (people.length < 2) return 0;
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < people.length; i++) {
+    for (let j = i + 1; j < people.length; j++) {
+      sum += boxIoU(people[i]!.bbox, people[j]!.bbox);
+      n += 1;
+    }
+  }
+  return n ? sum / n : 0;
+}
+
+function boxIoU(
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number },
+): number {
+  const ax2 = a.x + a.width;
+  const ay2 = a.y + a.height;
+  const bx2 = b.x + b.width;
+  const by2 = b.y + b.height;
+  const ix1 = Math.max(a.x, b.x);
+  const iy1 = Math.max(a.y, b.y);
+  const ix2 = Math.min(ax2, bx2);
+  const iy2 = Math.min(ay2, by2);
+  const iw = Math.max(0, ix2 - ix1);
+  const ih = Math.max(0, iy2 - iy1);
+  const inter = iw * ih;
+  if (inter <= 0) return 0;
+  const union = a.width * a.height + b.width * b.height - inter;
+  return union > 0 ? inter / union : 0;
 }

@@ -22,7 +22,7 @@ export function App() {
     dismissEmergency,
     resetDemo,
     setPoliceMode,
-    setCocoFallback,
+    setBackupThreshold,
     dismissSideAlert,
   } = useSightline();
   const [query, setQuery] = useState("Where is my black laptop?");
@@ -31,28 +31,53 @@ export function App() {
   const [picker, setPicker] = useState<{ query: string; matches: RecallMatch[] } | null>(null);
 
   const policeMode = Boolean(state?.policeMode);
-  const cocoFallback = Boolean(state?.cocoFallback);
+  const police = state?.policeStatus;
 
+  // Browser COCO: always for snappy POV; in police mode still report people for crowd meter.
   const { detections: browserDets, ready: visionReady, status: visionStatus } = useBrowserVision(
     state?.latestFrameJpegBase64 ?? null,
-    { enabled: !policeMode, report: !policeMode },
+    { enabled: true, report: true },
   );
 
-  const overlayDetections = (() => {
+  const overlayDetections = useMemo(() => {
     const server = state?.latestDetections ?? [];
-    if (policeMode || !visionReady) return server;
-    return browserDets.map((d) => {
-      const match = server.find(
-        (s) =>
-          s.label === d.label &&
-          Math.abs(s.bbox.x - d.bbox.x) < 0.12 &&
-          Math.abs(s.bbox.y - d.bbox.y) < 0.12,
+    const POLICE_KEEP =
+      /\b(gun|handgun|pistol|rifle|firearm|weapon|knife|blade|machete|person|people|crowd|fist|fight|punch|hostile|license\s*plate|number\s*plate|plate)\b/i;
+
+    if (!policeMode) {
+      if (!visionReady) return server;
+      return browserDets.map((d) => {
+        const match = server.find(
+          (s) =>
+            s.label === d.label &&
+            Math.abs(s.bbox.x - d.bbox.x) < 0.12 &&
+            Math.abs(s.bbox.y - d.bbox.y) < 0.12,
+        );
+        return match && match.displayName && match.displayName !== match.label
+          ? { ...d, displayName: match.displayName, descriptors: match.descriptors }
+          : d;
+      });
+    }
+
+    // Police POV: ignore non-weapons / clutter — people, weapons, hostility cues, plates only.
+    const fromBrowser = browserDets.filter((d) =>
+      POLICE_KEEP.test(`${d.label} ${d.displayName ?? ""}`),
+    );
+    const fromServer = server.filter((d) =>
+      POLICE_KEEP.test(`${d.label} ${d.displayName ?? ""}`),
+    );
+    const merged = [...fromBrowser];
+    for (const s of fromServer) {
+      const dup = merged.some(
+        (b) =>
+          Math.abs(b.bbox.x - s.bbox.x) < 0.12 &&
+          Math.abs(b.bbox.y - s.bbox.y) < 0.12 &&
+          Math.abs(b.bbox.width - s.bbox.width) < 0.18,
       );
-      return match && match.displayName && match.displayName !== match.label
-        ? { ...d, displayName: match.displayName, descriptors: match.descriptors }
-        : d;
-    });
-  })();
+      if (!dup) merged.push(s);
+    }
+    return merged;
+  }, [browserDets, state?.latestDetections, visionReady, policeMode]);
 
   const linkStatus = useMemo(() => {
     if (!state?.session?.connected) return { label: "LINK DOWN", tone: "warn" as const };
@@ -116,6 +141,9 @@ export function App() {
   const showBlockingEmergency =
     Boolean(state?.emergencyAlert?.active) && !state?.emergencyAlert?.policeBackup;
 
+  const danger = police?.dangerLevel ?? 0;
+  const backupPct = Math.round((police?.backupThreshold ?? 0.55) * 100);
+
   return (
     <div className={`app ${policeMode ? "app--police" : ""}`}>
       <header className="header">
@@ -152,14 +180,6 @@ export function App() {
             {policeMode ? "Police ON" : "Police"}
           </button>
           <button
-            className={`btn ${cocoFallback ? "primary" : ""}`}
-            onClick={() => run("coco", () => setCocoFallback(!cocoFallback))}
-            disabled={!!busy}
-            title="When LocateAnything returns nothing, fall back to local COCO-SSD"
-          >
-            {cocoFallback ? "COCO ON" : "COCO OFF"}
-          </button>
-          <button
             className="btn danger"
             onClick={() => run("fall", simulateFall)}
             disabled={!!busy}
@@ -180,7 +200,7 @@ export function App() {
       <div className="main">
         <section className="panel pov-panel">
           <div className="panel-title">
-            {policeMode ? "Live POV · police scan (weapons / plates)" : "Live POV · detections"}
+            {policeMode ? "Live POV · officer safety" : "Live POV · detections"}
           </div>
           <LivePOV
             jpegBase64={state?.latestFrameJpegBase64 ?? null}
@@ -188,34 +208,94 @@ export function App() {
             source={state?.session?.videoStats?.lastVideoSource}
             visionStatus={visionStatus}
           />
-          <div className="actions">
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void run("recall", doRecall);
-              }}
-              placeholder="Where is my black laptop?"
-              aria-label="Recall query"
-            />
-            <button
-              className="btn primary"
-              onClick={() => run("recall", doRecall)}
-              disabled={!!busy}
-            >
-              Recall
-            </button>
-          </div>
-          {recallNote && (
-            <div className="stack" style={{ paddingTop: 4, borderTop: "1px solid var(--line)" }}>
-              <div className="row">
-                <span className="k">Last recall</span>
-                <span className="v" style={{ textAlign: "left", whiteSpace: "normal" }}>
-                  {recallNote}
-                </span>
+
+          {policeMode ? (
+            <div className="police-bar">
+              <div className="danger-meter">
+                <div className="danger-meter-head">
+                  <span className="danger-meter-label">Danger</span>
+                  <strong className={`danger-meter-value danger-meter-value--${(police?.dangerLabel ?? "Clear").toLowerCase()}`}>
+                    {police?.dangerLabel ?? "Clear"} · {danger}
+                  </strong>
+                </div>
+                <div className="danger-meter-track" aria-hidden>
+                  <div
+                    className="danger-meter-fill"
+                    style={{ width: `${danger}%` }}
+                  />
+                  <div
+                    className="danger-meter-mark"
+                    style={{ left: `${backupPct}%` }}
+                    title={`Backup threshold ${backupPct}%`}
+                  />
+                </div>
+                <div className="danger-meter-meta">
+                  <span>
+                    {police?.topThreat
+                      ? `${police.topThreat} · ${Math.round((police.topConfidence ?? 0) * 100)}%`
+                      : "No weapons in last scan"}
+                    {" · "}
+                    {police?.groupCount ?? 0} people
+                    {police?.largeGroup ? " (large group)" : ""}
+                    {" · "}
+                    Hostility {police?.hostilityLabel ?? "Calm"}
+                    {typeof police?.hostility === "number" ? ` ${police.hostility}` : ""}
+                  </span>
+                  {police?.backupArmed && (
+                    <span className="danger-meter-armed">BACKUP ARMED</span>
+                  )}
+                </div>
               </div>
+              <label className="backup-threshold">
+                <span className="backup-threshold-label">
+                  Call backup at ≥ <strong>{backupPct}%</strong> confidence
+                </span>
+                <input
+                  type="range"
+                  min={20}
+                  max={95}
+                  step={5}
+                  value={backupPct}
+                  onChange={(e) => {
+                    const next = Number(e.target.value) / 100;
+                    void setBackupThreshold(next);
+                  }}
+                  aria-label="Backup confidence threshold"
+                />
+              </label>
             </div>
+          ) : (
+            <>
+              <div className="actions">
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void run("recall", doRecall);
+                  }}
+                  placeholder="Where is my black laptop?"
+                  aria-label="Recall query"
+                />
+                <button
+                  className="btn primary"
+                  onClick={() => run("recall", doRecall)}
+                  disabled={!!busy}
+                >
+                  Recall
+                </button>
+              </div>
+              {recallNote && (
+                <div className="stack" style={{ paddingTop: 4, borderTop: "1px solid var(--line)" }}>
+                  <div className="row">
+                    <span className="k">Last recall</span>
+                    <span className="v" style={{ textAlign: "left", whiteSpace: "normal" }}>
+                      {recallNote}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </section>
 
@@ -228,7 +308,7 @@ export function App() {
               {overlayDetections.length === 0 && (
                 <div className="det-item">
                   {policeMode
-                    ? "Police scan idle — needs LocateAnything for weapons / plates"
+                    ? "Weapons, people & hostility only — clutter ignored"
                     : "Waiting for objects — phone, laptop, backpack…"}
                 </div>
               )}

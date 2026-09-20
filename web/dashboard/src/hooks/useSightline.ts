@@ -60,6 +60,18 @@ export type DashState = {
   policeMode?: boolean;
   cocoFallback?: boolean;
   sideAlerts?: SideAlert[];
+  policeStatus?: {
+    dangerLevel: number;
+    dangerLabel: string;
+    topThreat: string | null;
+    topConfidence: number;
+    backupThreshold: number;
+    backupArmed: boolean;
+    groupCount: number;
+    largeGroup: boolean;
+    hostility: number;
+    hostilityLabel: string;
+  };
   session: {
     connected: boolean;
     sessionId: string;
@@ -280,6 +292,41 @@ export function useSightline() {
     );
   }
 
+  async function setBackupThreshold(threshold: number) {
+    setState((prev) =>
+      prev?.policeStatus
+        ? {
+            ...prev,
+            policeStatus: { ...prev.policeStatus, backupThreshold: threshold },
+          }
+        : prev,
+    );
+    const res = await fetch("/api/mode/backup-threshold", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threshold }),
+    });
+    const data = (await res.json()) as {
+      backupThreshold?: number;
+      policeStatus?: DashState["policeStatus"];
+    };
+    setState((prev) =>
+      prev
+        ? {
+            ...prev,
+            policeStatus: data.policeStatus ?? {
+              dangerLevel: prev.policeStatus?.dangerLevel ?? 0,
+              dangerLabel: prev.policeStatus?.dangerLabel ?? "Clear",
+              topThreat: prev.policeStatus?.topThreat ?? null,
+              topConfidence: prev.policeStatus?.topConfidence ?? 0,
+              backupThreshold: data.backupThreshold ?? threshold,
+              backupArmed: prev.policeStatus?.backupArmed ?? false,
+            },
+          }
+        : prev,
+    );
+  }
+
   async function dismissSideAlert(id: string) {
     let wasDown = false;
     setState((prev) => {
@@ -318,6 +365,7 @@ export function useSightline() {
     resetDemo,
     setPoliceMode,
     setCocoFallback,
+    setBackupThreshold,
     dismissSideAlert,
   };
 }
