@@ -93,6 +93,22 @@ export function createApiRouter(app: SightlineApp) {
     res.json({ ok: true });
   });
 
+  router.post("/mode/police", (req, res) => {
+    const enabled = Boolean(req.body?.enabled);
+    res.json(app.setPoliceMode(enabled));
+  });
+
+  router.post("/mode/coco-fallback", (req, res) => {
+    const enabled = Boolean(req.body?.enabled);
+    res.json(app.setCocoFallback(enabled));
+  });
+
+  router.post("/alerts/dismiss", (req, res) => {
+    const id = String(req.body?.id ?? "");
+    if (id) app.dismissSideAlert(id);
+    res.json({ ok: true });
+  });
+
   router.post("/demo/reset", (_req, res) => {
     app.resetDemo();
     res.json({ ok: true });

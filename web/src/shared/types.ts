@@ -126,6 +126,29 @@ export interface EmergencyAlert {
   reason: string;
   message: string;
   location?: GeoPoint | null;
+  /** When true, fall is treated as officer-down → request backup (police mode). */
+  policeBackup?: boolean;
+}
+
+export type SideAlertKind =
+  | "danger_weapon"
+  | "plate_capture"
+  | "backup_recommend"
+  | "officer_down"
+  | "info";
+
+export interface SideAlert {
+  id: string;
+  kind: SideAlertKind;
+  severity: "info" | "warn" | "critical";
+  title: string;
+  message: string;
+  timestampMs: number;
+  /** Auto-dismiss after this many ms; null = sticky until dismissed. */
+  ttlMs: number | null;
+  thumbBase64?: string | null;
+  label?: string;
+  location?: GeoPoint | null;
 }
 
 export interface DashboardState {
@@ -146,4 +169,14 @@ export interface DashboardState {
   mode: string;
   transcriptSnippet: string;
   emergencyAlert: EmergencyAlert | null;
+  locateAnything: {
+    configured: boolean;
+    ok: boolean;
+    checkedAtMs: number;
+    latencyMs: number | null;
+    detail?: string;
+  };
+  policeMode: boolean;
+  cocoFallback: boolean;
+  sideAlerts: SideAlert[];
 }

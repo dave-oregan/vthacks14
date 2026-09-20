@@ -28,6 +28,15 @@ export const config = {
   /** Optional NVIDIA LocateAnything worker base URL (POST /detect). */
   locateAnythingUrl: (process.env.LOCATE_ANYTHING_URL ?? "").replace(/\/$/, ""),
   locateAnythingTimeoutMs: Number(process.env.LOCATE_ANYTHING_TIMEOUT_MS ?? 8000),
+  /** Min ms between LocateAnything calls (slow GPU path). */
+  locateAnythingMinIntervalMs: Number(process.env.LOCATE_ANYTHING_MIN_INTERVAL_MS ?? 8000),
+  /**
+   * When LocateAnything returns 0 / fails, fall back to local COCO-SSD.
+   * Default off — LA empty should not pay COCO load cost or muddy the demo.
+   */
+  cocoFallback: ["1", "true", "yes", "on"].includes(
+    String(process.env.COCO_FALLBACK ?? "false").toLowerCase(),
+  ),
   leaveBehindMeters: Number(process.env.LEAVE_BEHIND_METERS ?? 12),
   leaveBehindAbsentMs: Number(process.env.LEAVE_BEHIND_ABSENT_MS ?? 8000),
   dbPath: path.join(ROOT, "data", "sightline.sqlite"),

@@ -29,10 +29,10 @@ export function EmergencyModal({
     <div className="modal-backdrop emergency-backdrop" role="alertdialog" aria-modal="true">
       <div className="modal emergency-modal">
         <div className="emergency-banner">DEMO ONLY — NO REAL 911 CALL</div>
-        <div className="modal-header" style={{ borderBottom: "1px solid #5a2218" }}>
+        <div className="modal-header">
           <div>
             <div className="emergency-title">Possible fall detected</div>
-            <div className="modal-sub" style={{ color: "#ffc9bc" }}>
+            <div className="modal-sub">
               SIGHTLINE would contact 911 with last-known phone location
             </div>
           </div>

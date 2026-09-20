@@ -9,12 +9,17 @@ export class EmergencyService extends EventEmitter {
   private fallDetector = new FallDetector();
   public emergencyAlert: EmergencyAlert | null = null;
   public lastKnownLocation: GeoPoint | null = null;
+  private isPoliceMode: () => boolean = () => false;
 
   constructor(
     private relay: RelayHub,
-    private store: MemoryStore
+    private store: MemoryStore,
   ) {
     super();
+  }
+
+  setPoliceModeGetter(fn: () => boolean): void {
+    this.isPoliceMode = fn;
   }
 
   reset() {
@@ -36,7 +41,7 @@ export class EmergencyService extends EventEmitter {
         horizontalAccuracyMeters: geo.horizontalAccuracyMeters,
         timestampMs: geo.timestampMs,
       };
-      
+
       if (this.emergencyAlert?.active) {
         this.emergencyAlert = {
           ...this.emergencyAlert,
@@ -44,6 +49,7 @@ export class EmergencyService extends EventEmitter {
           message: this.emergencyMessage(
             this.emergencyAlert.peakImpactG,
             this.lastKnownLocation,
+            Boolean(this.emergencyAlert.policeBackup),
           ),
         };
         this.emit("emergency", this.emergencyAlert);
@@ -66,6 +72,7 @@ export class EmergencyService extends EventEmitter {
 
   private triggerEmergency(fall: FallEvent): EmergencyAlert {
     const loc = this.resolvePhoneLocation();
+    const policeBackup = this.isPoliceMode();
     const alert: EmergencyAlert = {
       active: true,
       demo: true,
@@ -73,12 +80,13 @@ export class EmergencyService extends EventEmitter {
       peakImpactG: fall.peakImpactG,
       freefallMs: fall.freefallMs,
       reason: fall.reason,
-      message: this.emergencyMessage(fall.peakImpactG, loc),
+      message: this.emergencyMessage(fall.peakImpactG, loc, policeBackup),
       location: loc,
+      policeBackup,
     };
-    
+
     this.emergencyAlert = alert;
-    
+
     this.store.addEvent({
       type: "possible_emergency",
       timestampMs: fall.triggeredAtMs,
@@ -87,21 +95,33 @@ export class EmergencyService extends EventEmitter {
       description: alert.message,
       location: loc,
     });
-    
+
     console.warn(
-      `[emergency:demo] ${fall.reason} peak=${fall.peakImpactG}g loc=${
+      `[emergency:demo] ${policeBackup ? "police-backup" : "911"} ${fall.reason} peak=${fall.peakImpactG}g loc=${
         loc ? `${loc.latitude.toFixed(5)},${loc.longitude.toFixed(5)}` : "none"
       }`,
     );
-    
+
     this.emit("emergency", alert);
-    
+    if (policeBackup) {
+      this.emit("police_officer_down", {
+        peakImpactG: fall.peakImpactG,
+        location: loc,
+        sessionId: fall.sessionId,
+        alert,
+      });
+    }
+
     void speak(
-      loc
-        ? `SIGHTLINE demo alert. Possible fall detected near ${loc.latitude.toFixed(3)}, ${loc.longitude.toFixed(3)}. Contacting nine one one. This is a demonstration only.`
-        : "SIGHTLINE demo alert. Possible fall detected. Contacting nine one one. This is a demonstration only.",
+      policeBackup
+        ? loc
+          ? `SIGHTLINE police demo. Officer down near ${loc.latitude.toFixed(3)}, ${loc.longitude.toFixed(3)}. Requesting backup. This is a demonstration only.`
+          : "SIGHTLINE police demo. Officer down. Requesting backup. This is a demonstration only."
+        : loc
+          ? `SIGHTLINE demo alert. Possible fall detected near ${loc.latitude.toFixed(3)}, ${loc.longitude.toFixed(3)}. Contacting nine one one. This is a demonstration only.`
+          : "SIGHTLINE demo alert. Possible fall detected. Contacting nine one one. This is a demonstration only.",
     ).then((voice) => this.emit("voice", voice));
-    
+
     return alert;
   }
 
@@ -122,7 +142,13 @@ export class EmergencyService extends EventEmitter {
     return withGeo[0]?.lastLocation ?? null;
   }
 
-  private emergencyMessage(peakG: number, loc: GeoPoint | null): string {
+  private emergencyMessage(peakG: number, loc: GeoPoint | null, policeBackup: boolean): string {
+    if (policeBackup) {
+      if (loc) {
+        return `Officer down / impact ${peakG}g. DEMO: would request backup at ${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}. No real dispatch.`;
+      }
+      return `Officer down / impact ${peakG}g. DEMO: would request backup — waiting for phone GPS. No real dispatch.`;
+    }
     if (loc) {
       const acc =
         loc.horizontalAccuracyMeters != null && Number.isFinite(loc.horizontalAccuracyMeters)

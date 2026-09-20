@@ -48,7 +48,18 @@ export type DashState = {
     reason: string;
     message: string;
     location?: { latitude: number; longitude: number } | null;
+    policeBackup?: boolean;
   } | null;
+  locateAnything?: {
+    configured: boolean;
+    ok: boolean;
+    checkedAtMs: number;
+    latencyMs: number | null;
+    detail?: string;
+  };
+  policeMode?: boolean;
+  cocoFallback?: boolean;
+  sideAlerts?: SideAlert[];
   session: {
     connected: boolean;
     sessionId: string;
@@ -60,6 +71,19 @@ export type DashState = {
       lastVideoSource?: string;
     };
   } | null;
+};
+
+export type SideAlert = {
+  id: string;
+  kind: "danger_weapon" | "plate_capture" | "backup_recommend" | "officer_down" | "info";
+  severity: "info" | "warn" | "critical";
+  title: string;
+  message: string;
+  timestampMs: number;
+  ttlMs: number | null;
+  thumbBase64?: string | null;
+  label?: string;
+  location?: { latitude: number; longitude: number } | null;
 };
 
 export type RecallMatch = {
@@ -230,6 +254,58 @@ export function useSightline() {
     await fetch("/api/demo/reset", { method: "POST" });
   }
 
+  async function setPoliceMode(enabled: boolean) {
+    setState((prev) => (prev ? { ...prev, policeMode: enabled, sideAlerts: enabled ? prev.sideAlerts ?? [] : [] } : prev));
+    const res = await fetch("/api/mode/police", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    const data = (await res.json()) as { policeMode?: boolean };
+    setState((prev) =>
+      prev ? { ...prev, policeMode: Boolean(data.policeMode ?? enabled) } : prev,
+    );
+  }
+
+  async function setCocoFallback(enabled: boolean) {
+    setState((prev) => (prev ? { ...prev, cocoFallback: enabled } : prev));
+    const res = await fetch("/api/mode/coco-fallback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    const data = (await res.json()) as { cocoFallback?: boolean };
+    setState((prev) =>
+      prev ? { ...prev, cocoFallback: Boolean(data.cocoFallback ?? enabled) } : prev,
+    );
+  }
+
+  async function dismissSideAlert(id: string) {
+    let wasDown = false;
+    setState((prev) => {
+      if (!prev) return prev;
+      wasDown = (prev.sideAlerts ?? []).some((a) => a.id === id && a.kind === "officer_down");
+      return {
+        ...prev,
+        sideAlerts: (prev.sideAlerts ?? []).filter((a) => a.id !== id),
+        ...(wasDown
+          ? {
+              emergencyAlert: null,
+              mode: prev.mode === "EMERGENCY" ? "LIVE" : prev.mode,
+            }
+          : {}),
+      };
+    });
+    await fetch("/api/alerts/dismiss", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (wasDown) {
+      await fetch("/api/emergency/dismiss", { method: "POST" });
+    }
+  }
+
   return {
     state,
     connected,
@@ -240,5 +316,8 @@ export function useSightline() {
     simulateFall,
     dismissEmergency,
     resetDemo,
+    setPoliceMode,
+    setCocoFallback,
+    dismissSideAlert,
   };
 }

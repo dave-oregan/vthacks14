@@ -1,13 +1,22 @@
 /**
  * Local vision — COCO-SSD.
  * Prefers @tensorflow/tfjs-node; falls back to CPU so the server never fails to boot.
+ *
+ * Node 23+ removed util.isNullOrUndefined; tfjs-node still calls it — polyfill first.
  */
+import util from "node:util";
 import * as tf from "@tensorflow/tfjs";
 import * as cocoSsd from "@tensorflow-models/coco-ssd";
 import sharp from "sharp";
 import { config } from "../config.js";
 import type { BBox, Detection } from "../shared/types.js";
 import { normalizeLabel } from "../memory/store.js";
+
+// @tensorflow/tfjs-node does `require("util").isNullOrUndefined` — gone in Node 23+.
+const nodeUtil = util as typeof util & { isNullOrUndefined?: (v: unknown) => boolean };
+if (typeof nodeUtil.isNullOrUndefined !== "function") {
+  nodeUtil.isNullOrUndefined = (v: unknown) => v === null || v === undefined;
+}
 
 const COCO_BASE: "mobilenet_v2" | "lite_mobilenet_v2" = "lite_mobilenet_v2";
 const VISION_MAX_WIDTH = 480;
@@ -22,6 +31,14 @@ async function ensureBackend(): Promise<void> {
     backendReady = (async () => {
       try {
         await import("@tensorflow/tfjs-node");
+        await tf.ready();
+        // Smoke-test Cast — if util polyfill failed, fall through to CPU.
+        const t = tf.tensor1d([1], "int32");
+        try {
+          t.cast("float32").dispose();
+        } finally {
+          t.dispose();
+        }
       } catch (err) {
         console.warn(
           "[vision] tfjs-node unavailable, using CPU:",
@@ -29,8 +46,8 @@ async function ensureBackend(): Promise<void> {
         );
         await import("@tensorflow/tfjs-backend-cpu");
         await tf.setBackend("cpu");
+        await tf.ready();
       }
-      await tf.ready();
       console.log(`[vision] backend=${tf.getBackend()}`);
     })();
   }

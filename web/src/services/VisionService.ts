@@ -5,7 +5,7 @@ import type { MemoryStore } from "../memory/store.js";
 import { formatObjectPhrase } from "../memory/store.js";
 import { detectObjects, cropThumb, makePreviewJpeg } from "../vision/detector.js";
 import { describeDetectionsLocally } from "../vision/appearance.js";
-import { detectWithLocateAnything, hasLocateAnything } from "../vision/locateAnything.js";
+import { detectWithLocateAnything, hasLocateAnything, getDetectCategories } from "../vision/locateAnything.js";
 import { enrichDetectionsWithGemini } from "../gemini/enricher.js";
 import { hasGemini } from "../gemini/client.js";
 import type { Detection, GeoPoint } from "../shared/types.js";
@@ -41,13 +41,18 @@ export class VisionService extends EventEmitter {
   private geminiCounter = 0;
   private lastPreviewSentAt = 0;
   private previewBusy = false;
+  private lastLocateAnythingAt = 0;
+  private allowCocoFallback: () => boolean;
 
   constructor(
     private relay: RelayHub,
     private store: MemoryStore,
-    private onSyncMissions: (detections: Detection[], location: GeoPoint | null, sessionId: string) => Promise<void>
+    private onSyncMissions: (detections: Detection[], location: GeoPoint | null, sessionId: string) => Promise<void>,
+    private isPoliceMode: () => boolean = () => false,
+    allowCocoFallback: () => boolean = () => config.cocoFallback,
   ) {
     super();
+    this.allowCocoFallback = allowCocoFallback;
   }
 
   getLatestDetections() {
@@ -72,15 +77,26 @@ export class VisionService extends EventEmitter {
   async processVideoFrame(frame: RelayVideoFrame): Promise<void> {
     this.latestFrameJpeg = frame.jpeg;
     this.frameCounter += 1;
-    
+
+    // Always keep the live preview moving — never wait on LocateAnything.
     void this.maybeBroadcastPreview();
-    
-    if (
-      (config.visionMode === "server" || config.visionMode === "both") &&
-      this.frameCounter % config.visionEveryNFrames === 0
-    ) {
-      void this.runVision(frame);
+
+    const useServerVision =
+      config.visionMode === "server" ||
+      config.visionMode === "both" ||
+      this.isPoliceMode() ||
+      hasLocateAnything();
+
+    if (!useServerVision) return;
+    if (this.frameCounter % config.visionEveryNFrames !== 0) return;
+
+    // LA is ~4–15s/call — don't queue another until the min interval passes.
+    if (hasLocateAnything()) {
+      const since = Date.now() - this.lastLocateAnythingAt;
+      if (since < config.locateAnythingMinIntervalMs) return;
     }
+
+    void this.runVision(frame);
   }
 
   private async maybeBroadcastPreview(): Promise<void> {
@@ -109,33 +125,61 @@ export class VisionService extends EventEmitter {
     if (this.visionBusy) return;
     this.visionBusy = true;
     try {
-      let detections: Detection[];
-      let detector: "locateanything" | "coco" = "coco";
+      let detections: Detection[] = [];
+      let detector: "locateanything" | "coco" | "none" = "none";
       let laMs = 0;
       const visionStart = Date.now();
+      const cocoOk = this.allowCocoFallback();
+
       if (hasLocateAnything()) {
+        this.lastLocateAnythingAt = Date.now();
         const laStart = Date.now();
-        const la = await detectWithLocateAnything(frame.jpeg);
+        const la = await detectWithLocateAnything(frame.jpeg, {
+          categories: getDetectCategories(this.isPoliceMode()),
+        });
         laMs = Date.now() - laStart;
         if (la.length > 0) {
           detections = la;
           detector = "locateanything";
-        } else {
+        } else if (cocoOk) {
           console.warn(
-            `[vision] LocateAnything returned 0 detections after ${laMs}ms -> FALLING BACK to COCO ` +
+            `[vision] LocateAnything returned 0 after ${laMs}ms → COCO fallback ` +
               `(worker: ${config.locateAnythingUrl || "unset"})`,
           );
           detections = await detectObjects(frame.jpeg);
+          detector = "coco";
+        } else {
+          console.warn(
+            `[vision] LocateAnything returned 0 after ${laMs}ms — keeping prior boxes (COCO fallback OFF)`,
+          );
+          detections = this.latestDetections;
+          detector = "none";
         }
-      } else {
+      } else if (cocoOk || config.visionMode === "server" || config.visionMode === "both") {
         detections = await detectObjects(frame.jpeg);
+        detector = "coco";
       }
-      this.lastDetector = detector;
+
+      if (detector === "locateanything" || detector === "coco") {
+        this.lastDetector = detector;
+      }
       console.log(
-        `[vision] detector=${detector.toUpperCase()} objects=${detections.length} ` +
-          `total=${Date.now() - visionStart}ms` +
-          (hasLocateAnything() ? ` locateAnything=${laMs}ms` : " (LocateAnything not configured)"),
+        `[vision] detector=${(detector === "none" ? "HOLD" : detector).toUpperCase()} ` +
+          `objects=${detections.length} total=${Date.now() - visionStart}ms` +
+          (hasLocateAnything() ? ` locateAnything=${laMs}ms` : "") +
+          (hasLocateAnything() && !cocoOk ? " cocoFallback=off" : ""),
       );
+
+      const fresh = detector === "locateanything" || detector === "coco";
+      if (!fresh) {
+        this.emit("frame", {
+          jpegBase64: this.latestPreviewJpeg?.toString("base64") ?? null,
+          detections: this.latestDetections,
+          session: this.relay.getSession(),
+        });
+        return;
+      }
+
       detections = await describeDetectionsLocally(frame.jpeg, detections);
       this.latestDetections = detections;
       this.relay.markVisioned();
@@ -156,7 +200,14 @@ export class VisionService extends EventEmitter {
         this.relay.getSession()?.lastLocation ?? null,
         frame.sessionId,
       );
-      
+
+      this.emit("detections", {
+        jpeg: frame.jpeg,
+        detections,
+        location: this.relay.getSession()?.lastLocation ?? null,
+        sessionId: frame.sessionId,
+      });
+
       this.emit("frame", {
         jpegBase64: this.latestPreviewJpeg?.toString("base64") ?? null,
         detections: this.latestDetections,
@@ -235,6 +286,15 @@ export class VisionService extends EventEmitter {
       session?.lastLocation ?? null,
       session?.sessionId ?? "browser",
     );
+
+    if (this.latestFrameJpeg) {
+      this.emit("detections", {
+        jpeg: this.latestFrameJpeg,
+        detections: this.latestDetections,
+        location: session?.lastLocation ?? null,
+        sessionId: session?.sessionId ?? "browser",
+      });
+    }
     
     this.emit("frame", {
       jpegBase64: this.latestPreviewJpeg?.toString("base64") ?? null,

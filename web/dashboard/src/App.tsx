@@ -8,6 +8,7 @@ import { Timeline } from "./components/Timeline";
 import { LinkPanel } from "./components/LinkPanel";
 import { RecallPicker } from "./components/RecallPicker";
 import { EmergencyModal } from "./components/EmergencyModal";
+import { SideAlertStack } from "./components/SideAlertStack";
 
 export function App() {
   const {
@@ -20,20 +21,26 @@ export function App() {
     simulateFall,
     dismissEmergency,
     resetDemo,
+    setPoliceMode,
+    setCocoFallback,
+    dismissSideAlert,
   } = useSightline();
   const [query, setQuery] = useState("Where is my black laptop?");
   const [busy, setBusy] = useState<string | null>(null);
   const [recallNote, setRecallNote] = useState<string | null>(null);
   const [picker, setPicker] = useState<{ query: string; matches: RecallMatch[] } | null>(null);
 
+  const policeMode = Boolean(state?.policeMode);
+  const cocoFallback = Boolean(state?.cocoFallback);
+
   const { detections: browserDets, ready: visionReady, status: visionStatus } = useBrowserVision(
     state?.latestFrameJpegBase64 ?? null,
-    { enabled: true, report: true },
+    { enabled: !policeMode, report: !policeMode },
   );
 
   const overlayDetections = (() => {
     const server = state?.latestDetections ?? [];
-    if (!visionReady) return server;
+    if (policeMode || !visionReady) return server;
     return browserDets.map((d) => {
       const match = server.find(
         (s) =>
@@ -51,6 +58,24 @@ export function App() {
     if (!state?.session?.connected) return { label: "LINK DOWN", tone: "warn" as const };
     return { label: "LINKED", tone: "ok" as const };
   }, [state?.session?.connected]);
+
+  const lasStatus = useMemo(() => {
+    const la = state?.locateAnything;
+    if (!la?.configured) return { label: "LAs OFF", tone: "" as const, title: "LocateAnything URL not set" };
+    if (la.ok) {
+      const ms = la.latencyMs != null ? ` · ${la.latencyMs}ms` : "";
+      return {
+        label: "LAs OK",
+        tone: "ok" as const,
+        title: `LocateAnything reachable${ms}`,
+      };
+    }
+    return {
+      label: "LAs DOWN",
+      tone: "warn" as const,
+      title: la.detail ? `LocateAnything: ${la.detail}` : "LocateAnything unreachable",
+    };
+  }, [state?.locateAnything]);
 
   async function run(name: string, fn: () => Promise<unknown>) {
     setBusy(name);
@@ -88,12 +113,19 @@ export function App() {
     setPicker(null);
   }
 
+  const showBlockingEmergency =
+    Boolean(state?.emergencyAlert?.active) && !state?.emergencyAlert?.policeBackup;
+
   return (
-    <div className="app">
+    <div className={`app ${policeMode ? "app--police" : ""}`}>
       <header className="header">
         <div className="brand">
           <h1>SIGHTLINE</h1>
-          <span>Mission Control · scan QR to link iPhone</span>
+          <span>
+            {policeMode
+              ? "Police suite — weapons, plates, officer safety & backup"
+              : "Mission Control — link the phone, recall what the world forgot"}
+          </span>
         </div>
         <div className="header-meta">
           <div className="pill">
@@ -104,26 +136,44 @@ export function App() {
             <span className={`dot ${linkStatus.tone}`} />
             {linkStatus.label}
           </div>
-          <div className="pill">UI {connected ? "WS OK" : "WS…"}</div>
+          <div className="pill" title={lasStatus.title}>
+            <span className={`dot ${lasStatus.tone}`} />
+            {lasStatus.label}
+          </div>
+          <div className="pill">{connected ? "WS OK" : "WS…"}</div>
           <div className="pill">{state?.mode ?? "STANDBY"}</div>
-          <div className="pill">Memory {state?.objects.length ?? 0}</div>
+          <div className="pill">{state?.objects.length ?? 0} mem</div>
+          <button
+            className={`btn ${policeMode ? "primary" : ""}`}
+            onClick={() => run("police", () => setPoliceMode(!policeMode))}
+            disabled={!!busy}
+            title="Toggle police safety suite"
+          >
+            {policeMode ? "Police ON" : "Police"}
+          </button>
           <button
             className="btn danger"
             onClick={() => run("fall", simulateFall)}
             disabled={!!busy}
-            title="Demo only — does not call 911"
+            title={
+              policeMode
+                ? "Demo: officer down → request backup"
+                : "Demo only — does not call 911"
+            }
           >
-            Simulate Fall → 911
+            {policeMode ? "Simulate Down" : "Simulate Fall"}
           </button>
-          <button className="btn danger" onClick={() => run("reset", resetDemo)} disabled={!!busy}>
-            Demo Reset
+          <button className="btn" onClick={() => run("reset", resetDemo)} disabled={!!busy}>
+            Reset
           </button>
         </div>
       </header>
 
       <div className="main">
         <section className="panel pov-panel">
-          <div className="panel-title">Live POV · browser COCO-SSD</div>
+          <div className="panel-title">
+            {policeMode ? "Live POV · police scan (weapons / plates)" : "Live POV · detections"}
+          </div>
           <LivePOV
             jpegBase64={state?.latestFrameJpegBase64 ?? null}
             detections={overlayDetections}
@@ -138,7 +188,8 @@ export function App() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") void run("recall", doRecall);
               }}
-              placeholder="Where is my black laptop? / recall laptop"
+              placeholder="Where is my black laptop?"
+              aria-label="Recall query"
             />
             <button
               className="btn primary"
@@ -149,9 +200,9 @@ export function App() {
             </button>
           </div>
           {recallNote && (
-            <div className="stack" style={{ paddingTop: 0, borderTop: "1px solid var(--line)" }}>
+            <div className="stack" style={{ paddingTop: 4, borderTop: "1px solid var(--line)" }}>
               <div className="row">
-                <span className="k">Recall</span>
+                <span className="k">Last recall</span>
                 <span className="v" style={{ textAlign: "left", whiteSpace: "normal" }}>
                   {recallNote}
                 </span>
@@ -168,7 +219,9 @@ export function App() {
             <div className="scroll">
               {overlayDetections.length === 0 && (
                 <div className="det-item">
-                  No detections yet — point camera at a phone, laptop, backpack…
+                  {policeMode
+                    ? "Police scan idle — needs LocateAnything for weapons / plates"
+                    : "Waiting for objects — phone, laptop, backpack…"}
                 </div>
               )}
               {overlayDetections.map((d) => (
@@ -200,7 +253,7 @@ export function App() {
                 </span>
               </div>
               <div className="row">
-                <span className="k">Video source</span>
+                <span className="k">Video</span>
                 <span className="v">
                   {state?.session?.activeSources?.video ??
                     state?.session?.videoStats?.lastVideoSource ??
@@ -208,7 +261,7 @@ export function App() {
                 </span>
               </div>
               <div className="row">
-                <span className="k">Frames / vision</span>
+                <span className="k">Frames</span>
                 <span className="v">
                   {state?.session?.videoStats?.framesReceived ?? 0} /{" "}
                   {state?.session?.videoStats?.framesVisioned ?? 0}
@@ -232,6 +285,11 @@ export function App() {
 
       <Timeline events={state?.events ?? []} />
 
+      <SideAlertStack
+        alerts={state?.sideAlerts ?? []}
+        onDismiss={(id) => void dismissSideAlert(id)}
+      />
+
       {picker && (
         <RecallPicker
           query={picker.query}
@@ -241,7 +299,7 @@ export function App() {
         />
       )}
 
-      {state?.emergencyAlert?.active && (
+      {showBlockingEmergency && state?.emergencyAlert && (
         <EmergencyModal
           key={state.emergencyAlert.triggeredAtMs}
           alert={state.emergencyAlert}
