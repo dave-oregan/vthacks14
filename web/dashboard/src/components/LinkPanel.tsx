@@ -45,8 +45,8 @@ export function LinkPanel({ linked }: { linked: boolean }) {
   }
 
   return (
-    <section className="panel">
-      <div className="panel-title">Link iPhone · one step</div>
+    <details className="panel" open>
+      <summary className="panel-title">Link iPhone · one step</summary>
       <div className="stack">
         <div className="row">
           <span className="k">Status</span>
@@ -109,6 +109,6 @@ export function LinkPanel({ linked }: { linked: boolean }) {
           </p>
         )}
       </div>
-    </section>
+    </details>
   );
 }

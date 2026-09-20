@@ -18,8 +18,8 @@ export function AgentPanel({
   onBlockUnknown: () => void;
 }) {
   return (
-    <section className="panel">
-      <div className="panel-title">Agents · ANS</div>
+    <details className="panel" open>
+      <summary className="panel-title">Agents · ANS</summary>
       <div className="scroll">
         {agents.map((a) => (
           <div className="agent-item" key={a.id}>
@@ -64,6 +64,6 @@ export function AgentPanel({
           </div>
         </div>
       )}
-    </section>
+    </details>
   );
 }

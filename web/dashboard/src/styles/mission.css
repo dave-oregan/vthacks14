@@ -19,9 +19,25 @@
   --font-display: "Syne", "Avenir Next", sans-serif;
   --font-sans: "DM Sans", "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --radius: 3px;
+  --radius: 12px;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --shadow-soft: 0 1px 0 rgba(255, 255, 255, 0.65) inset, 0 18px 40px rgba(12, 16, 23, 0.06);
+  --shadow-soft: 0 1px 0 rgba(255, 255, 255, 0.65) inset, 0 12px 36px rgba(12, 16, 23, 0.08);
+}
+
+:root[data-theme="dark"] {
+  --ink: #f0f4f8;
+  --ink-soft: #a0aec0;
+  --muted: #8b9eb5;
+  --line: rgba(255, 255, 255, 0.12);
+  --line-strong: rgba(255, 255, 255, 0.22);
+  --surface: rgba(18, 24, 34, 0.78);
+  --surface-solid: #1a202c;
+  --surface-elevated: #2d3748;
+  --bg-deep: #090c10;
+  --accent: #14b8a6;
+  --accent-bright: #2dd4bf;
+  --accent-ink: #5eead4;
+  --shadow-soft: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 12px 36px rgba(0, 0, 0, 0.4);
 }
 
 * { box-sizing: border-box; }
@@ -42,6 +58,14 @@ body {
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  transition: color 0.3s var(--ease), background 0.3s var(--ease);
+}
+
+:root[data-theme="dark"] body {
+  background:
+    radial-gradient(1000px 480px at 0% -5%, rgba(20, 184, 166, 0.15), transparent 55%),
+    radial-gradient(800px 420px at 100% 0%, rgba(255, 255, 255, 0.03), transparent 50%),
+    linear-gradient(160deg, #0d1117 0%, #161b22 42%, #090c10 100%);
 }
 
 body::before {
@@ -197,12 +221,12 @@ button, input { font: inherit; }
   border: 1px solid var(--line-strong);
   background: var(--surface-elevated);
   color: var(--ink);
-  padding: 8px 13px;
+  padding: 8px 16px;
   cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 650;
+  font-size: 0.8rem;
+  font-weight: 600;
   letter-spacing: -0.01em;
-  border-radius: var(--radius);
+  border-radius: calc(var(--radius) - 4px);
   transition: background 0.2s var(--ease), border-color 0.2s var(--ease), transform 0.2s var(--ease), box-shadow 0.2s var(--ease);
 }
 .btn:hover {
@@ -218,12 +242,12 @@ button, input { font: inherit; }
 }
 .btn.primary {
   background: var(--ink);
-  color: #f6f8fb;
+  color: var(--surface-elevated);
   border-color: var(--ink);
 }
 .btn.primary:hover {
-  background: #1a2230;
-  border-color: #1a2230;
+  background: var(--ink-soft);
+  border-color: var(--ink-soft);
 }
 .btn.danger {
   border-color: rgba(190, 18, 60, 0.28);
@@ -233,6 +257,25 @@ button, input { font: inherit; }
 .btn.danger:hover {
   background: #fff1f2;
   border-color: var(--danger);
+}
+
+:root[data-theme="dark"] .btn.primary {
+  background: var(--ink);
+  color: var(--surface-elevated);
+  border-color: var(--ink);
+}
+:root[data-theme="dark"] .btn.primary:hover {
+  background: #ffffff;
+  border-color: #ffffff;
+}
+:root[data-theme="dark"] .btn.danger {
+  background: rgba(30, 20, 20, 0.85);
+}
+:root[data-theme="dark"] .btn.danger:hover {
+  background: #3e121a;
+}
+:root[data-theme="dark"] .status-rail {
+  background: rgba(18, 24, 34, 0.45);
 }
 
 /* —— Layout —— */
@@ -287,6 +330,22 @@ button, input { font: inherit; }
   text-transform: uppercase;
   color: var(--muted);
   flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  border-top-left-radius: calc(var(--radius) - 1px);
+  border-top-right-radius: calc(var(--radius) - 1px);
+}
+.panel-title:hover {
+  background: var(--line);
+}
+details:not([open]) > .panel-title {
+  border-bottom: none;
+  border-bottom-left-radius: calc(var(--radius) - 1px);
+  border-bottom-right-radius: calc(var(--radius) - 1px);
+}
+.panel-title::-webkit-details-marker {
+  /* You can hide it if desired, but keeping it shows it's collapsable */
 }
 
 .pov-panel {
@@ -513,6 +572,11 @@ button, input { font: inherit; }
   flex-shrink: 0;
   border-top: 1px solid var(--line);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.55));
+  border-bottom-left-radius: calc(var(--radius) - 1px);
+  border-bottom-right-radius: calc(var(--radius) - 1px);
+}
+:root[data-theme="dark"] .actions {
+  background: linear-gradient(180deg, rgba(26, 32, 44, 0.35), rgba(26, 32, 44, 0.55));
 }
 
 .police-bar {
@@ -524,6 +588,11 @@ button, input { font: inherit; }
   border-top: 1px solid var(--line);
   background:
     linear-gradient(135deg, rgba(255, 248, 248, 0.7), rgba(255, 255, 255, 0.55));
+  border-bottom-left-radius: calc(var(--radius) - 1px);
+  border-bottom-right-radius: calc(var(--radius) - 1px);
+}
+:root[data-theme="dark"] .police-bar {
+  background: linear-gradient(135deg, rgba(30, 20, 20, 0.7), rgba(26, 32, 44, 0.55));
 }
 
 @media (max-width: 720px) {

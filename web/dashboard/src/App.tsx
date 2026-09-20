@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useSightline, type RecallMatch } from "./hooks/useSightline";
 import { useBrowserVision } from "./hooks/useBrowserVision";
 import { LivePOV } from "./components/LivePOV";
@@ -25,6 +25,16 @@ export function App() {
     setBackupThreshold,
     dismissSideAlert,
   } = useSightline();
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+  }, [theme]);
+
   const [query, setQuery] = useState("Where is my black laptop?");
   const [busy, setBusy] = useState<string | null>(null);
   const [recallNote, setRecallNote] = useState<string | null>(null);
@@ -174,6 +184,13 @@ export function App() {
           </div>
           <div className="action-rail">
             <button
+              className="btn"
+              onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+              title="Toggle Dark Mode"
+            >
+              {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+            </button>
+            <button
               className={`btn ${policeMode ? "primary" : ""}`}
               onClick={() => run("police", () => setPoliceMode(!policeMode))}
               disabled={!!busy}
@@ -307,8 +324,8 @@ export function App() {
         <aside className="side">
           <LinkPanel linked={Boolean(state?.session?.connected)} />
 
-          <section className="panel">
-            <div className="panel-title">Vision</div>
+          <details className="panel" open>
+            <summary className="panel-title">Vision</summary>
             <div className="scroll">
               {overlayDetections.length === 0 && (
                 <div className="det-item">
@@ -330,12 +347,12 @@ export function App() {
                 </div>
               ))}
             </div>
-          </section>
+          </details>
 
           <MemoryPanel objects={state?.objects ?? []} />
 
-          <section className="panel">
-            <div className="panel-title">Context</div>
+          <details className="panel" open>
+            <summary className="panel-title">Context</summary>
             <div className="stack">
               <div className="row">
                 <span className="k">Location</span>
@@ -365,7 +382,7 @@ export function App() {
                 <span className="v">{state?.transcriptSnippet || "—"}</span>
               </div>
             </div>
-          </section>
+          </details>
 
           <AgentPanel
             agents={state?.agents ?? []}

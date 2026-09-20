@@ -12,8 +12,8 @@ type Obj = {
 
 export function MemoryPanel({ objects }: { objects: Obj[] }) {
   return (
-    <section className="panel">
-      <div className="panel-title">Memory · last seen</div>
+    <details className="panel" open>
+      <summary className="panel-title">Memory · last seen</summary>
       <div className="scroll">
         {objects.length === 0 && (
           <div className="obj-item">
@@ -52,6 +52,6 @@ export function MemoryPanel({ objects }: { objects: Obj[] }) {
           );
         })}
       </div>
-    </section>
+    </details>
   );
 }
