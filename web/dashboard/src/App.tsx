@@ -225,19 +225,19 @@ export function App() {
 
   function onModeChange(next: AppMode) {
     setMode(next);
+    if (next !== "recall") setRewinding(false);
   }
 
   const showBlockingEmergency = Boolean(state?.emergencyAlert?.active);
 
-  const recallCanvas =
-    selectedMatch?.thumbBase64 != null
+  // Historical memory frames only belong on Recall — Live/Guardian always show the camera.
+  const canvasJpeg =
+    mode === "recall" && selectedMatch?.thumbBase64
       ? selectedMatch.thumbBase64
-      : mode === "recall" && selectedMatch
-        ? state?.latestFrameJpegBase64
-        : state?.latestFrameJpegBase64;
+      : (state?.latestFrameJpegBase64 ?? null);
 
   const recallHighlight =
-    selectedMatch && selectedMatch.kind !== "transcript"
+    mode === "recall" && selectedMatch && selectedMatch.kind !== "transcript"
       ? selectedMatch.label || selectedMatch.phrase
       : null;
 
@@ -308,13 +308,13 @@ export function App() {
       <div className="workspace">
         <section className="canvas-col">
           <LivePOV
-            jpegBase64={recallCanvas ?? null}
+            jpegBase64={canvasJpeg}
             detections={mode === "recall" && selectedMatch?.thumbBase64 ? [] : overlayDetections}
             source={state?.session?.videoStats?.lastVideoSource}
             visionStatus={visionStatus}
             variant={mode === "recall" ? "recall" : mode === "guardian" ? "guardian" : "live"}
-            highlightLabel={mode === "recall" ? recallHighlight : null}
-            rewinding={rewinding}
+            highlightLabel={recallHighlight}
+            rewinding={mode === "recall" && rewinding}
             onConnectClick={
               !phoneLinked
                 ? () => {
