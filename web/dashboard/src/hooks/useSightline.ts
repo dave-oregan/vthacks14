@@ -242,7 +242,7 @@ export function useSightline() {
     return (await res.json()) as RecallResult;
   }
 
-  async function selectRecall(match: RecallMatch | string) {
+  async function selectRecall(match: RecallMatch | string, query?: string) {
     const m = typeof match === "string" ? { id: match, kind: "object" as const } : match;
     const res = await fetch("/api/recall/select", {
       method: "POST",
@@ -251,6 +251,7 @@ export function useSightline() {
         objectId: m.id,
         kind: m.kind ?? "object",
         transcriptText: "transcriptText" in m ? m.transcriptText : undefined,
+        query: query || undefined,
       }),
     });
     return res.json() as Promise<{

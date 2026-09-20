@@ -1,18 +1,24 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { config } from "../config.js";
 
-/** Prefer models that still serve generateContent for consumer API keys. */
+/**
+ * Prefer models known to work with current consumer API keys.
+ * Dead / region-gated ids burn latency before we reach a working one.
+ */
 const MODEL_CANDIDATES = [
   process.env.GEMINI_MODEL,
-  "gemini-2.5-flash",
-  "gemini-2.5-flash-lite",
   "gemini-flash-latest",
-  "gemini-2.0-flash-lite",
-  "gemini-1.5-flash",
-  "gemini-1.5-flash-8b",
+  "gemini-3.5-flash",
+  "gemini-flash-lite-latest",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-flash",
 ].filter((m): m is string => Boolean(m && m.trim()));
 
 let cachedModelName: string | null = null;
+/** One-at-a-time model discovery so parallel recalls don't thrash 404s. */
+let chain: Promise<unknown> = Promise.resolve();
 
 export function hasGemini(): boolean {
   return Boolean(config.geminiApiKey);
@@ -27,14 +33,9 @@ export async function generateWithFallback(
 ): Promise<string> {
   if (!config.geminiApiKey) throw new Error("GEMINI_API_KEY missing");
 
-  const genAI = new GoogleGenerativeAI(config.geminiApiKey);
-  const order = cachedModelName
-    ? [cachedModelName, ...MODEL_CANDIDATES.filter((m) => m !== cachedModelName)]
-    : MODEL_CANDIDATES;
-
-  let lastErr: unknown;
-  for (const name of order) {
-    try {
+  const run = async (): Promise<string> => {
+    const genAI = new GoogleGenerativeAI(config.geminiApiKey);
+    const tryOnce = async (name: string): Promise<string> => {
       const model = genAI.getGenerativeModel({
         model: name,
         generationConfig: opts?.responseMimeType
@@ -42,20 +43,39 @@ export async function generateWithFallback(
           : undefined,
       });
       const result = await model.generateContent(parts);
-      if (!cachedModelName) console.log(`[gemini] using model ${name}`);
-      cachedModelName = name;
       return result.response.text();
-    } catch (err) {
-      lastErr = err;
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/404|not found|no longer available|503|high demand|unavailable/i.test(msg)) {
-        console.warn(`[gemini] model ${name} unavailable, trying next…`);
-        if (cachedModelName === name) cachedModelName = null;
-        continue;
+    };
+
+    const order = cachedModelName
+      ? [cachedModelName, ...MODEL_CANDIDATES.filter((m) => m !== cachedModelName)]
+      : MODEL_CANDIDATES;
+
+    let lastErr: unknown;
+    for (const name of order) {
+      try {
+        const text = await tryOnce(name);
+        if (cachedModelName !== name) console.log(`[gemini] using model ${name}`);
+        cachedModelName = name;
+        return text;
+      } catch (err) {
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/404|not found|no longer available|503|high demand|unavailable/i.test(msg)) {
+          console.warn(`[gemini] model ${name} unavailable, trying next…`);
+          if (cachedModelName === name) cachedModelName = null;
+          continue;
+        }
+        // Don't burn quota hopping models on 429.
+        throw err;
       }
-      // Don't burn the free-tier quota hopping models on 429.
-      throw err;
     }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  };
+
+  const next = chain.then(run, run);
+  chain = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
 }

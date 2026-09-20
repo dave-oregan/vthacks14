@@ -204,16 +204,15 @@ export function App() {
   }
 
   async function onPickMatch(m: RecallMatch) {
-    await selectRecall(m);
+    const picked = await selectRecall(m, picker?.query || query);
     applyMatch(
       m,
-      m.kind === "transcript"
-        ? m.transcriptText
-          ? `${m.phrase}: “${m.transcriptText}” · ${m.lastSeenLabel}`
-          : `${m.phrase} · ${m.lastSeenLabel}`
-        : m.latitude != null && m.longitude != null
-          ? `${m.phrase} · last seen near ${m.latitude.toFixed(5)}, ${m.longitude.toFixed(5)}`
-          : `${m.phrase} · ${m.lastSeenLabel}`,
+      picked.text ||
+        (m.kind === "transcript"
+          ? m.lastSeenLabel
+          : m.latitude != null && m.longitude != null
+            ? `${m.phrase} · last seen near ${m.latitude.toFixed(5)}, ${m.longitude.toFixed(5)}`
+            : `${m.phrase} · ${m.lastSeenLabel}`),
     );
     setPicker(null);
   }

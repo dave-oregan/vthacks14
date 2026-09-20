@@ -2,10 +2,12 @@ import { generateWithFallback, hasGemini } from "./client.js";
 import { formatObjectPhrase, type MemoryStore } from "../memory/store.js";
 import type { MemoryObject } from "../shared/types.js";
 import {
-  isPeopleTranscriptQuery,
+  isTranscriptMemoryQuery,
   recentHeardTranscripts,
+  scoreTranscriptText,
   searchObjectsInAtlas,
   searchTranscriptsInAtlas,
+  splitTranscriptTokens,
   type TranscriptHit,
 } from "../memory/db.js";
 
@@ -42,10 +44,10 @@ export async function answerRecallQuery(
 ): Promise<RecallResult> {
   const q = query.trim();
 
-  // People / conversation questions → Gemini over heard transcripts first.
-  if (isPeopleTranscriptQuery(q)) {
-    const people = await answerPeopleFromTranscripts(q);
-    if (people.matches.length > 0) return people;
+  // Conversation / people / story questions → Gemini summary over transcripts.
+  if (isTranscriptMemoryQuery(q)) {
+    const conversational = await answerConversationalFromTranscripts(q);
+    if (conversational) return conversational;
   }
 
   // Visual object recall via Atlas (fallback: in-memory).
@@ -76,13 +78,11 @@ export async function answerRecallQuery(
   const uniqueHits = [...new Map(hits.map((h) => [h.id, h])).values()];
   const objectMatches = uniqueHits.map(toRecallMatch);
 
-  // Transcript matches (Mongo) — always available as parallel memory.
   const spoken = (await searchTranscriptsInAtlas(q)) ?? [];
   const transcriptMatches = spoken
-    .filter((h) => h.matchedTokens > 0 || isPeopleTranscriptQuery(q))
+    .filter((h) => h.matchedTokens > 0)
     .map(toTranscriptMatch);
 
-  // Prefer objects when we have them; otherwise transcripts; or merge both into picker.
   if (objectMatches.length === 0 && transcriptMatches.length === 0) {
     console.log(`[recall] "${q}" -> 0 matches`);
     return {
@@ -94,7 +94,7 @@ export async function answerRecallQuery(
   }
 
   if (objectMatches.length === 0 && transcriptMatches.length > 0) {
-    console.log(`[recall] "${q}" -> ${transcriptMatches.length} TRANSCRIPT match(es)`);
+    console.log(`[recall] "${q}" -> ${transcriptMatches.length} TRANSCRIPT match(es) (summarize)`);
     return packTranscriptChoices(q, transcriptMatches);
   }
 
@@ -103,7 +103,6 @@ export async function answerRecallQuery(
       (transcriptMatches.length ? ` + ${transcriptMatches.length} transcript(s)` : ""),
   );
 
-  // One clear object hit and no competing transcripts → speak it.
   if (objectMatches.length === 1 && transcriptMatches.length === 0) {
     const best = uniqueHits[0]!;
     const text = await speakRecall(q, best);
@@ -116,7 +115,6 @@ export async function answerRecallQuery(
     };
   }
 
-  // Multiple cards (objects and/or transcripts) → same list picker UI.
   const combined = [...objectMatches, ...transcriptMatches];
   const labels = combined
     .map((m) => m.phrase)
@@ -130,18 +128,139 @@ export async function answerRecallQuery(
   };
 }
 
-function packTranscriptChoices(query: string, matches: RecallMatch[]): RecallResult {
+/**
+ * Gather relevant overheard lines and answer with a Gemini paraphrase/summary —
+ * never read the transcript back verbatim.
+ */
+async function answerConversationalFromTranscripts(query: string): Promise<RecallResult | null> {
+  const { strong, weak } = splitTranscriptTokens(query);
+
+  const keywordHits = (await searchTranscriptsInAtlas(query, 30)) ?? [];
+  const recent = await recentHeardTranscripts(100);
+
+  // Re-score everything against the query (recentHeard defaults matchedTokens=1).
+  const scored = new Map<string, TranscriptHit>();
+  for (const h of [...keywordHits, ...recent]) {
+    const { score, matchedTokens } = scoreTranscriptText(h.text, strong, weak);
+    const prev = scored.get(h.id);
+    const next: TranscriptHit = {
+      ...h,
+      score,
+      matchedTokens: matchedTokens || (tokensEmpty(strong, weak) ? 1 : 0),
+    };
+    if (!prev || (next.score ?? 0) > (prev.score ?? 0)) scored.set(h.id, next);
+  }
+
+  let ranked = [...scored.values()].sort(
+    (a, b) =>
+      (b.score ?? 0) - (a.score ?? 0) ||
+      b.matchedTokens - a.matchedTokens ||
+      b.timestampMs - a.timestampMs,
+  );
+
+  // Prefer lines that hit a strong token (e.g. "David") when the question names one.
+  const strongHits = strong.length > 0 ? ranked.filter((h) => (h.score ?? 0) >= 3) : [];
+  const seed = strongHits.length > 0 ? strongHits : ranked.filter((h) => (h.score ?? 0) > 0);
+
+  if (seed.length === 0 && ranked.length === 0) return null;
+
+  let lines: TranscriptHit[];
+  if (seed.length > 0) {
+    const windowMs = 2 * 60_000;
+    const enriched = new Map(seed.slice(0, 20).map((m) => [m.id, m]));
+    for (const m of seed.slice(0, 12)) {
+      for (const r of ranked) {
+        if (Math.abs(r.timestampMs - m.timestampMs) <= windowMs) {
+          const existing = enriched.get(r.id);
+          if (!existing || (r.score ?? 0) >= (existing.score ?? 0)) enriched.set(r.id, r);
+        }
+      }
+    }
+    lines = [...enriched.values()].sort((a, b) => a.timestampMs - b.timestampMs);
+  } else {
+    lines = ranked.slice(0, 40).sort((a, b) => a.timestampMs - b.timestampMs);
+  }
+
+  if (lines.length === 0) {
+    return {
+      text: "I don’t have any overheard speech recorded yet.",
+      query,
+      needsChoice: false,
+      matches: [],
+    };
+  }
+
+  // For Gemini: lead with highest-scoring lines, then chronological context.
+  const forModel = [
+    ...[...lines].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 24),
+  ];
+  // Dedupe while preferring score order already in forModel
+  const modelIds = new Set(forModel.map((l) => l.id));
+  for (const l of lines) {
+    if (!modelIds.has(l.id) && forModel.length < 40) {
+      forModel.push(l);
+      modelIds.add(l.id);
+    }
+  }
+
+  const matches = [...lines]
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, 12)
+    .map(toTranscriptMatch);
+
+  const summary = await summarizeTranscriptsForQuery(query, forModel, { strong, weak });
+  if (summary) {
+    console.log(
+      `[recall] "${query}" -> Gemini transcript summary (${forModel.length} lines, strong=[${strong.join(",")}])`,
+    );
+    return {
+      text: summary,
+      query,
+      needsChoice: false,
+      matches,
+    };
+  }
+
+  return packTranscriptChoices(query, matches);
+}
+
+function tokensEmpty(strong: string[], weak: string[]): boolean {
+  return strong.length === 0 && weak.length === 0;
+}
+
+async function packTranscriptChoices(query: string, matches: RecallMatch[]): Promise<RecallResult> {
+  const lines: TranscriptHit[] = matches.map((m) => ({
+    id: m.id,
+    text: m.transcriptText ?? m.phrase,
+    timestampMs: m.lastSeenAtMs,
+    source: m.transcriptSource ?? null,
+    direction: "heard",
+    matchedTokens: 1,
+  }));
+  const summary = await summarizeTranscriptsForQuery(query, lines);
+  if (summary) {
+    return {
+      text: summary,
+      query,
+      needsChoice: false,
+      matches,
+    };
+  }
+
   if (matches.length === 1) {
     const m = matches[0]!;
+    const snippet = (m.transcriptText ?? m.phrase).slice(0, 160);
     return {
-      text: `You heard: “${m.transcriptText ?? m.phrase}” ${describeAgo(m.lastSeenAtMs)}.`,
+      text: `From conversation ${describeAgo(m.lastSeenAtMs)}: ${snippet}${
+        (m.transcriptText ?? "").length > 160 ? "…" : ""
+      }`,
       query,
       needsChoice: false,
       matches,
     };
   }
   return {
-    text: `I found ${matches.length} transcript matches for “${query}”. Pick one.`,
+    text: `I found ${matches.length} conversation memories for “${query}”. Pick one for details.`,
     query,
     needsChoice: true,
     matches,
@@ -149,113 +268,60 @@ function packTranscriptChoices(query: string, matches: RecallMatch[]): RecallRes
 }
 
 /**
- * "Who did I meet?" — Gemini reads recent heard lines and returns named people /
- * self-introductions as picker cards. Falls back to regex intros if no Gemini.
+ * Gemini: answer the user's question by summarizing transcript evidence.
+ * Explicitly avoids reading lines back verbatim.
  */
-async function answerPeopleFromTranscripts(query: string): Promise<RecallResult> {
-  const lines = await recentHeardTranscripts(80);
-  if (lines.length === 0) {
-    return { text: "I don’t have any overheard speech recorded yet.", query, needsChoice: false, matches: [] };
-  }
+export async function summarizeTranscriptsForQuery(
+  query: string,
+  lines: TranscriptHit[],
+  focus?: { strong: string[]; weak: string[] },
+): Promise<string | null> {
+  if (!hasGemini() || lines.length === 0) return null;
+  try {
+    const payload = lines.slice(0, 40).map((l) => ({
+      id: l.id,
+      when: new Date(l.timestampMs).toISOString(),
+      score: l.score ?? 0,
+      text: l.text,
+    }));
+    const focusLine =
+      focus && focus.strong.length > 0
+        ? `\nFocus entities/topics from the question (must ground the answer when present in transcripts): ${focus.strong.join(", ")}.`
+        : "";
+    const raw = await generateWithFallback([
+      {
+        text: `You are SIGHTLINE, an AI memory layer for overheard speech (wearable mic transcripts).
 
-  if (hasGemini()) {
-    try {
-      const payload = lines.slice(0, 40).map((l) => ({
-        id: l.id,
-        when: new Date(l.timestampMs).toISOString(),
-        text: l.text,
-      }));
-      const raw = await generateWithFallback(
-        [
-          {
-            text: `You are SIGHTLINE memory. The user asked: "${query}"
+The user asked: "${query}"
+${focusLine}
 
-Below are overheard transcript lines (wearer's mic). Extract people who were named or introduced themselves (e.g. "my name is …", "I'm …", "this is …").
+Here are relevant transcript lines (JSON). Higher "score" means a stronger match to the question (names outrank words like "story" or "talk"):
+${JSON.stringify(payload)}
 
-Return JSON only:
-{ "people": [ { "name": "Alex", "transcriptId": "<id>", "quote": "exact short quote", "note": "optional one clause" } ] }
+Write a spoken answer (2–5 sentences) that SUMMARIZES what the transcripts show.
 
 Rules:
-- Only use facts present in the transcripts. Do not invent names.
-- If nobody named themselves, return { "people": [] }.
-- Prefer distinct people. Max 8.
-
-Transcripts:
-${JSON.stringify(payload)}`,
-          },
-        ],
-        { responseMimeType: "application/json" },
-      );
-      const parsed = JSON.parse(stripFence(raw)) as {
-        people?: Array<{ name?: string; transcriptId?: string; quote?: string; note?: string }>;
-      };
-      const byId = new Map(lines.map((l) => [l.id, l]));
-      const matches: RecallMatch[] = [];
-      for (const p of parsed.people ?? []) {
-        const name = (p.name ?? "").trim();
-        if (!name) continue;
-        const line = (p.transcriptId && byId.get(p.transcriptId)) || findLineForQuote(lines, p.quote);
-        const quote = (p.quote ?? line?.text ?? "").trim();
-        matches.push({
-          id: line?.id ?? `person:${name.toLowerCase()}`,
-          kind: "transcript",
-          phrase: name,
-          label: "person",
-          descriptors: [quote, p.note ?? "from conversation"].filter(Boolean),
-          lastSeenAtMs: line?.timestampMs ?? Date.now(),
-          lastSeenLabel: line ? new Date(line.timestampMs).toLocaleString() : "unknown time",
-          latitude: null,
-          longitude: null,
-          mapsUrl: null,
-          thumbBase64: null,
-          sightingCount: 1,
-          status: "heard",
-          transcriptText: quote || line?.text,
-          transcriptSource: line?.source ?? null,
-        });
-      }
-      if (matches.length > 0) {
-        console.log(`[recall] "${query}" -> ${matches.length} people via Gemini transcripts`);
-        if (matches.length === 1) {
-          const m = matches[0]!;
-          return {
-            text: `You met ${m.phrase}. They said “${m.transcriptText}” ${describeAgo(m.lastSeenAtMs)}.`,
-            query,
-            needsChoice: false,
-            matches,
-          };
-        }
-        return {
-          text: `I found ${matches.length} people mentioned in conversation. Pick one.`,
-          query,
-          needsChoice: true,
-          matches,
-        };
-      }
-    } catch (err) {
-      console.warn("[recall] Gemini people extract failed:", err instanceof Error ? err.message : err);
-    }
+- Answer the user's question directly (e.g. what story was told to/about a named person).
+- Prefer high-score lines and anything mentioning the focus entities.
+- If multiple stories appear, pick the one that best matches the named person/topic — do not mix unrelated conversations.
+- Draw on as much relevant transcript content as needed — synthesize across lines.
+- Do NOT read transcript lines back verbatim or quote long passages.
+- Short quoted fragments (under ~8 words) are OK only for a name, title, or distinctive phrase.
+- Paraphrase stories and conversations in clear natural language.
+- If evidence is thin or conflicting, say what you found and what is unclear.
+- Do not invent people, places, or plot points that are not supported by the transcripts.
+- No markdown, bullets, or labels — plain speech suitable for text-to-speech.`,
+      },
+    ]);
+    const text = raw.trim();
+    return text || null;
+  } catch (err) {
+    console.warn(
+      "[recall] Gemini transcript summary failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
   }
-
-  // Regex fallback: "my name is X", "I'm X", "I am X"
-  const introHits = lines.filter((l) =>
-    /\b(my name is|i'?m|i am|this is|meet)\b/i.test(l.text),
-  );
-  if (introHits.length === 0) {
-    return { text: "I don’t have a recorded introduction matching that.", query, needsChoice: false, matches: [] };
-  }
-  const matches = introHits.slice(0, 8).map(toTranscriptMatch);
-  return packTranscriptChoices(query, matches);
-}
-
-function findLineForQuote(lines: TranscriptHit[], quote?: string): TranscriptHit | undefined {
-  if (!quote) return undefined;
-  const soft = quote.toLowerCase().slice(0, 40);
-  return lines.find((l) => l.text.toLowerCase().includes(soft));
-}
-
-function stripFence(text: string): string {
-  return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 }
 
 function toTranscriptMatch(h: TranscriptHit): RecallMatch {

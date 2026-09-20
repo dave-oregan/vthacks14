@@ -357,6 +357,14 @@ const RECALL_STOPWORDS = new Set([
   "who","whos","whose","whats","tell","about","say","said","again","that","this",
 ]);
 
+/** Words that match too many transcripts — useful context, weak for ranking. */
+const WEAK_TRANSCRIPT_TOKENS = new Set([
+  "story","stories","joke","anecdote","talk","talked","talking","spoke","speaking",
+  "conversation","chat","chatted","discuss","discussed","discussion","mention",
+  "mentioned","told","telling","hear","heard","overhear","overheard","meet","met",
+  "meeting","introduce","introduced","name","named","called","person","people",
+]);
+
 function escapeRegex(t: string): string {
   return t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -370,6 +378,41 @@ function recallTokens(query: string): string[] {
     .map((t) => (t === "macbook" || t === "notebook" ? "laptop" : t))
     .map((t) => (t === "gray" ? "grey" : t))
     .filter((t) => t.length > 1 && !RECALL_STOPWORDS.has(t));
+}
+
+/** Strong tokens = names / specifics; weak = story/talk/etc. */
+export function splitTranscriptTokens(query: string): { strong: string[]; weak: string[] } {
+  const tokens = recallTokens(query);
+  const strong: string[] = [];
+  const weak: string[] = [];
+  for (const t of tokens) {
+    if (WEAK_TRANSCRIPT_TOKENS.has(t)) weak.push(t);
+    else strong.push(t);
+  }
+  return { strong, weak };
+}
+
+export function scoreTranscriptText(
+  text: string,
+  strong: string[],
+  weak: string[],
+): { score: number; matchedTokens: number } {
+  const lower = text.toLowerCase();
+  let score = 0;
+  let matchedTokens = 0;
+  for (const t of strong) {
+    if (new RegExp(`\\b${escapeRegex(t)}`, "i").test(lower)) {
+      score += 3;
+      matchedTokens += 1;
+    }
+  }
+  for (const t of weak) {
+    if (new RegExp(`\\b${escapeRegex(t)}`, "i").test(lower)) {
+      score += 1;
+      matchedTokens += 1;
+    }
+  }
+  return { score, matchedTokens };
 }
 
 export interface AtlasRecallHit {
@@ -453,6 +496,8 @@ export interface TranscriptHit {
   source: string | null;
   direction: string;
   matchedTokens: number;
+  /** Weighted relevance (names score higher than "story"/"talk"). */
+  score?: number;
 }
 
 /**
@@ -467,19 +512,14 @@ export async function searchTranscriptsInAtlas(
   limit = 12,
 ): Promise<TranscriptHit[] | null> {
   if (!db) return null;
-  const tokens = recallTokens(query);
-  // Conversational / people queries: pull recent heard lines for Gemini / broad match.
-  const peopleQuery = isPeopleTranscriptQuery(query);
+  const { strong, weak } = splitTranscriptTokens(query);
+  const tokens = [...strong, ...weak];
+  const conversational = isTranscriptMemoryQuery(query);
   try {
     let docs: Array<Record<string, unknown>> = [];
-    if (peopleQuery || tokens.length === 0) {
-      docs = await db
-        .collection("transcripts")
-        .find({ direction: "heard" })
-        .sort({ timestampMs: -1 })
-        .limit(80)
-        .toArray();
-    } else {
+
+    // Always try token match first when we have searchable words.
+    if (tokens.length > 0) {
       const ors = tokens.map((t) => ({
         text: { $regex: `\\b${escapeRegex(t)}`, $options: "i" },
       }));
@@ -487,29 +527,57 @@ export async function searchTranscriptsInAtlas(
         .collection("transcripts")
         .find({ direction: "heard", $or: ors })
         .sort({ timestampMs: -1 })
-        .limit(40)
+        .limit(80)
         .toArray();
+    }
+
+    // Conversational queries: also pull recent lines so Gemini has context,
+    // but ranking below still prefers strong token hits (e.g. "David").
+    if (conversational || tokens.length === 0) {
+      const recent = await db
+        .collection("transcripts")
+        .find({ direction: "heard" })
+        .sort({ timestampMs: -1 })
+        .limit(80)
+        .toArray();
+      const seen = new Set(docs.map((d) => String(d._id)));
+      for (const d of recent) {
+        const id = String(d._id);
+        if (!seen.has(id)) {
+          docs.push(d);
+          seen.add(id);
+        }
+      }
     }
 
     const hits = docs.map((d) => {
       const text = String(d.text ?? "");
+      const { score, matchedTokens } = scoreTranscriptText(text, strong, weak);
       return {
         id: String(d._id),
         text,
         timestampMs: Number(d.timestampMs ?? 0),
         source: (d.source as string) ?? null,
         direction: String(d.direction ?? "heard"),
-        matchedTokens:
-          tokens.length === 0
-            ? 1
-            : tokens.filter((t) => new RegExp(`\\b${escapeRegex(t)}`, "i").test(text)).length,
+        matchedTokens: tokens.length === 0 ? 1 : matchedTokens,
+        score: tokens.length === 0 ? 1 : score,
       };
     });
-    if (!peopleQuery) {
-      hits.sort((a, b) => b.matchedTokens - a.matchedTokens || b.timestampMs - a.timestampMs);
-      return hits.filter((h) => h.matchedTokens > 0).slice(0, limit);
+
+    hits.sort(
+      (a, b) =>
+        (b.score ?? 0) - (a.score ?? 0) ||
+        b.matchedTokens - a.matchedTokens ||
+        b.timestampMs - a.timestampMs,
+    );
+
+    // If the query names someone ("David"), require at least one strong hit.
+    if (strong.length > 0) {
+      const strongHits = hits.filter((h) => (h.score ?? 0) >= 3);
+      if (strongHits.length > 0) return strongHits.slice(0, limit);
     }
-    return hits.slice(0, limit);
+
+    return hits.filter((h) => (h.score ?? 0) > 0 || tokens.length === 0).slice(0, limit);
   } catch (err) {
     note("transcripts", err);
     return [];
@@ -541,13 +609,25 @@ export async function recentHeardTranscripts(limit = 60): Promise<TranscriptHit[
 }
 
 export function isPeopleTranscriptQuery(query: string): boolean {
+  return isTranscriptMemoryQuery(query);
+}
+
+/**
+ * Questions about overheard speech / conversations — answered from transcripts
+ * (Gemini summary), not object memory.
+ */
+export function isTranscriptMemoryQuery(query: string): boolean {
   const q = query.toLowerCase();
   return (
     /\bwho\b/.test(q) ||
     /\b(met|meet|meeting|introduce|introduced|name is|named|called)\b/.test(q) ||
-    /\b(conversation|said|talked|spoke)\b/.test(q)
+    /\b(conversation|said|talked|talk|spoke|speaking|discuss|discussed|discussion)\b/.test(q) ||
+    /\b(story|stories|joke|anecdote|told|telling|mention|mentioned|chat|chatted)\b/.test(q) ||
+    /\bwhat\b.*\b(about|say|said|tell|told|talk|talked|hear|heard)\b/.test(q) ||
+    /\b(hear|heard|overhear|overheard)\b/.test(q)
   );
 }
+
 
 /** Live status for /api/health, so the dashboard can show the store is real. */
 export function mongoStatus() {

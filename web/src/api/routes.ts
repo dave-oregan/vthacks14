@@ -139,7 +139,8 @@ export function createApiRouter(app: SightlineApp) {
     const kind = req.body?.kind === "transcript" ? "transcript" : "object";
     const transcriptText =
       typeof req.body?.transcriptText === "string" ? req.body.transcriptText : undefined;
-    const result = await app.selectRecall(objectId, kind, transcriptText);
+    const query = typeof req.body?.query === "string" ? req.body.query : undefined;
+    const result = await app.selectRecall(objectId, kind, transcriptText, query);
     res.json(result);
   });
 

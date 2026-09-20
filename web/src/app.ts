@@ -486,17 +486,9 @@ export class SightlineApp extends EventEmitter {
     this.transcriptSnippet = query;
     if (!result.needsChoice && result.objectId) {
       this.store.markRecalled(result.objectId, this.relay.getSession()?.sessionId ?? "dashboard");
-      const voice = await speak(result.text);
-      this.emit("voice", voice);
-      this.broadcast();
-      return { ...result, voice };
     }
-    // Single transcript answer — still speak it.
-    if (
-      !result.needsChoice &&
-      result.matches.length === 1 &&
-      result.matches[0]?.kind === "transcript"
-    ) {
+    // Speak any direct answer (object location or Gemini transcript summary).
+    if (!result.needsChoice && result.text) {
       const voice = await speak(result.text);
       this.emit("voice", voice);
       this.broadcast();
@@ -510,16 +502,34 @@ export class SightlineApp extends EventEmitter {
     objectId: string,
     kind?: "object" | "transcript",
     transcriptText?: string,
+    query?: string,
   ) {
     if (kind === "transcript") {
       const fromLog = this.transcriptLog.find((t) => t.id === objectId);
       const line = transcriptText?.trim() || fromLog?.text;
       const when = fromLog?.timestampMs ?? Date.now();
-      const text = line
-        ? `You heard: “${line}” ${new Date(when).toLocaleString()}.`
-        : "Selected conversation line.";
+      const ask = (query ?? "What was this about?").trim();
+      let text: string;
+      if (line) {
+        const { summarizeTranscriptsForQuery } = await import("./gemini/reasoner.js");
+        const summary = await summarizeTranscriptsForQuery(ask, [
+          {
+            id: objectId,
+            text: line,
+            timestampMs: when,
+            source: fromLog?.source ?? null,
+            direction: "heard",
+            matchedTokens: 1,
+          },
+        ]);
+        text =
+          summary ??
+          `From conversation: ${line.slice(0, 180)}${line.length > 180 ? "…" : ""}`;
+      } else {
+        text = "Selected conversation line.";
+      }
       const voice = await speak(text);
-      this.transcriptSnippet = line ?? text;
+      this.transcriptSnippet = text;
       this.emit("voice", voice);
       this.broadcast();
       return {
