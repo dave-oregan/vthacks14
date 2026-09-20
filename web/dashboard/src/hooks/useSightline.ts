@@ -5,6 +5,13 @@ export type DashState = {
   live: boolean;
   mode: string;
   transcriptSnippet: string;
+  recentTranscripts?: Array<{
+    id: string;
+    direction: "heard" | "asked" | "spoken";
+    text: string;
+    timestampMs: number;
+    source?: string | null;
+  }>;
   latestFrameJpegBase64: string | null;
   latestDetections: Array<{
     trackId: string;
@@ -120,6 +127,7 @@ export type GuardianStatus = {
 
 export type RecallMatch = {
   id: string;
+  kind?: "object" | "transcript";
   phrase: string;
   label: string;
   descriptors: string[];
@@ -131,6 +139,8 @@ export type RecallMatch = {
   thumbBase64: string | null;
   sightingCount: number;
   status: string;
+  transcriptText?: string;
+  transcriptSource?: string | null;
 };
 
 export type RecallResult = {
@@ -229,11 +239,16 @@ export function useSightline() {
     return (await res.json()) as RecallResult;
   }
 
-  async function selectRecall(objectId: string) {
+  async function selectRecall(match: RecallMatch | string) {
+    const m = typeof match === "string" ? { id: match, kind: "object" as const } : match;
     const res = await fetch("/api/recall/select", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ objectId }),
+      body: JSON.stringify({
+        objectId: m.id,
+        kind: m.kind ?? "object",
+        transcriptText: "transcriptText" in m ? m.transcriptText : undefined,
+      }),
     });
     return res.json() as Promise<{
       ok: boolean;

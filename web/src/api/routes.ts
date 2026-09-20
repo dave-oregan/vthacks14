@@ -11,6 +11,7 @@ import {
   type TranscriptDirection,
 } from "../memory/db.js";
 import { speak } from "../voice/elevenlabs.js";
+import { getLatestVoiceClip } from "../voice/voiceCache.js";
 
 export function createApiRouter(app: SightlineApp) {
   const router = express.Router();
@@ -48,11 +49,25 @@ export function createApiRouter(app: SightlineApp) {
         : "SIGHTLINE voice check. If you can hear this, the audio path is working.";
     const voice = await speak(text);
     app.emit("voice", voice);
+    const clip = getLatestVoiceClip();
     res.json({
-      ...voice,
-      audioBytes: voice.audioBase64 ? Buffer.from(voice.audioBase64, "base64").length : 0,
-      audioBase64: undefined,
+      ok: voice.ok,
+      text: voice.text,
+      error: voice.error,
+      audioUrl: voice.audioUrl,
+      audioBytes: clip?.buf.length ?? 0,
     });
+  });
+
+  router.get("/voice/latest.mp3", (_req, res) => {
+    const clip = getLatestVoiceClip();
+    if (!clip) {
+      res.status(404).type("text/plain").send("no voice clip yet");
+      return;
+    }
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(clip.buf);
   });
 
   // Feed a WAV/MP3 straight to Scribe to prove the STT path without needing
@@ -70,9 +85,11 @@ export function createApiRouter(app: SightlineApp) {
   // Full transcript log out of Atlas, newest first.
   router.get("/mongo/transcripts", async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 50, 500);
-    const dir = req.query.direction;
-    const direction =
-      dir === "spoken" || dir === "asked" ? (dir as TranscriptDirection) : undefined;
+    const dir = String(req.query.direction ?? "");
+    const direction: TranscriptDirection | undefined =
+      dir === "spoken" || dir === "asked" || dir === "heard"
+        ? (dir as TranscriptDirection)
+        : undefined;
     res.json({
       status: mongoStatus(),
       direction: direction ?? "all",
@@ -118,8 +135,11 @@ export function createApiRouter(app: SightlineApp) {
   });
 
   router.post("/recall/select", async (req, res) => {
-    const objectId = String(req.body?.objectId ?? "");
-    const result = await app.selectRecall(objectId);
+    const objectId = String(req.body?.objectId ?? req.body?.id ?? "");
+    const kind = req.body?.kind === "transcript" ? "transcript" : "object";
+    const transcriptText =
+      typeof req.body?.transcriptText === "string" ? req.body.transcriptText : undefined;
+    const result = await app.selectRecall(objectId, kind, transcriptText);
     res.json(result);
   });
 

@@ -781,6 +781,66 @@ input[type="text"]::placeholder {
   padding: 14px;
 }
 
+.recall-card--transcript {
+  border-left: 3px solid var(--accent);
+}
+.recall-thumb-empty--tx {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.transcript-modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(80vh, 720px);
+  display: flex;
+  flex-direction: column;
+}
+.transcript-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 16px 10px;
+}
+.transcript-list {
+  flex: 1;
+  overflow: auto;
+  padding-bottom: 16px;
+}
+.transcript-line {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.transcript-line p {
+  margin: 6px 0 0;
+  font-size: 0.92rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+.transcript-line-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+.transcript-dir {
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+.transcript-line--heard .transcript-dir { color: var(--ok); }
+.transcript-line--asked .transcript-dir { color: var(--warn); }
+.transcript-line--spoken .transcript-dir { color: var(--ink-soft); }
+
 .recall-card {
   display: grid;
   grid-template-columns: 64px 1fr;
@@ -1062,6 +1122,24 @@ input[type="text"]::placeholder {
 }
 
 .voice-cap-mute:hover { color: var(--ink); border-color: var(--line-strong); }
+
+.voice-cap--arm {
+  cursor: pointer;
+  border: none;
+  font: inherit;
+  text-align: left;
+  width: min(520px, calc(100vw - 32px));
+}
+.voice-cap-retry {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
 
 @media (max-width: 640px) {
   .voice-cap { bottom: 12px; padding: 10px 12px; }

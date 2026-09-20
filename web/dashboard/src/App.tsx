@@ -9,7 +9,9 @@ import { LinkPanel } from "./components/LinkPanel";
 import { RecallPicker } from "./components/RecallPicker";
 import { EmergencyModal } from "./components/EmergencyModal";
 import { GuardianEventStack } from "./components/GuardianEventStack";
+import { TranscriptViewer } from "./components/TranscriptViewer";
 import { VoiceIndicator } from "./components/VoiceIndicator";
+import { unlockAudio } from "./voice/voicePlayer";
 
 export function App() {
   const {
@@ -44,6 +46,7 @@ export function App() {
   const [recallNote, setRecallNote] = useState<string | null>(null);
   const [guardianNote, setGuardianNote] = useState<string | null>(null);
   const [picker, setPicker] = useState<{ query: string; matches: RecallMatch[] } | null>(null);
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
 
   const guardianMode = Boolean(state?.guardianMode ?? state?.policeMode);
   const gStatus = state?.guardianStatus;
@@ -117,6 +120,10 @@ export function App() {
   }, [state?.locateAnything]);
 
   async function run(name: string, fn: () => Promise<unknown>) {
+    // Unlock browser audio inside the click stack so TTS that arrives later can play.
+    if (name === "fall" || name === "recall" || name === "pick" || name === "gquery") {
+      unlockAudio();
+    }
     setBusy(name);
     try {
       await fn();
@@ -145,7 +152,16 @@ export function App() {
   }
 
   async function onPickMatch(m: RecallMatch) {
-    await selectRecall(m.id);
+    await selectRecall(m);
+    if (m.kind === "transcript") {
+      setRecallNote(
+        m.transcriptText
+          ? `${m.phrase}: “${m.transcriptText}” · ${m.lastSeenLabel}`
+          : `${m.phrase} · ${m.lastSeenLabel}`,
+      );
+      setPicker(null);
+      return;
+    }
     if (m.mapsUrl) {
       window.open(m.mapsUrl, "_blank", "noopener,noreferrer");
     }
@@ -204,6 +220,13 @@ export function App() {
               title="Toggle Dark Mode"
             >
               {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
+            </button>
+            <button
+              className="btn"
+              onClick={() => setTranscriptOpen(true)}
+              title="Open live transcript history"
+            >
+              Transcript
             </button>
             <button
               className={`btn ${guardianMode ? "primary" : ""}`}
@@ -332,7 +355,7 @@ export function App() {
                   onKeyDown={(e) => {
                     if (e.key === "Enter") void run("recall", doRecall);
                   }}
-                  placeholder="Where is my black laptop?"
+                  placeholder="Where is my laptop? / Who did I meet?"
                   aria-label="Recall query"
                 />
                 <button
@@ -444,6 +467,16 @@ export function App() {
                 <span className="k">Transcript</span>
                 <span className="v">{state?.transcriptSnippet || "—"}</span>
               </div>
+              <div style={{ padding: "8px 12px 12px" }}>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ width: "100%" }}
+                  onClick={() => setTranscriptOpen(true)}
+                >
+                  Open full transcript
+                </button>
+              </div>
             </div>
           </details>
 
@@ -474,6 +507,18 @@ export function App() {
           onClose={() => setPicker(null)}
         />
       )}
+
+      <TranscriptViewer
+        open={transcriptOpen}
+        liveLines={(state?.recentTranscripts ?? []).map((t) => ({
+          id: t.id,
+          direction: t.direction,
+          text: t.text,
+          timestampMs: t.timestampMs,
+          source: t.source,
+        }))}
+        onClose={() => setTranscriptOpen(false)}
+      />
 
       {showBlockingEmergency && state?.emergencyAlert && (
         <EmergencyModal

@@ -36,6 +36,7 @@ export class SightlineApp extends EventEmitter {
   private guardianService: GuardianService;
 
   private transcriptSnippet = "";
+  private transcriptLog: DashboardState["recentTranscripts"] = [];
   private micSpeaking = false;
   private mode = "STANDBY";
   private lastAccessRequest = null as DashboardState["lastAccessRequest"];
@@ -424,6 +425,13 @@ export class SightlineApp extends EventEmitter {
   /** A transcribed utterance from the wearer's own microphone. */
   private async onHeard(u: Utterance): Promise<void> {
     this.transcriptSnippet = u.text;
+    this.pushTranscriptLog({
+      id: `heard-${u.startedAtMs}-${Math.random().toString(36).slice(2, 7)}`,
+      direction: "heard",
+      text: u.text,
+      timestampMs: u.startedAtMs,
+      source: u.source,
+    });
     mirrorTranscript({
       direction: "heard",
       text: u.text,
@@ -440,8 +448,13 @@ export class SightlineApp extends EventEmitter {
       severity: "info",
       description: `Heard (${u.source}): "${u.text}"`,
     });
+    this.guardianService.ingestAudioTranscript(
+      u.text,
+      this.relay.getSession()?.lastLocation ?? null,
+      u.sessionId,
+    );
     this.emit("heard", u);
-    this.broadcast();
+    this.broadcast(true);
 
     // Opt-in: let the wearer ask out loud instead of typing. Off by default so
     // a stray sentence during the demo can't fire a recall nobody asked for.
@@ -451,8 +464,19 @@ export class SightlineApp extends EventEmitter {
     }
   }
 
+  private pushTranscriptLog(entry: DashboardState["recentTranscripts"][number]): void {
+    this.transcriptLog = [entry, ...this.transcriptLog].slice(0, 200);
+  }
+
   async recall(query: string) {
     const sessionId = this.relay.getSession()?.sessionId ?? "dashboard";
+    this.pushTranscriptLog({
+      id: `asked-${Date.now()}`,
+      direction: "asked",
+      text: query,
+      timestampMs: Date.now(),
+      source: "mission-control",
+    });
     mirrorTranscript({ direction: "asked", text: query, sessionId, context: "recall" });
     const result = await answerRecallQuery(query, this.store);
     this.transcriptSnippet = query;
@@ -463,11 +487,59 @@ export class SightlineApp extends EventEmitter {
       this.broadcast();
       return { ...result, voice };
     }
+    // Single transcript answer — still speak it.
+    if (
+      !result.needsChoice &&
+      result.matches.length === 1 &&
+      result.matches[0]?.kind === "transcript"
+    ) {
+      const voice = await speak(result.text);
+      this.emit("voice", voice);
+      this.broadcast();
+      return { ...result, voice };
+    }
     this.broadcast();
     return result;
   }
 
-  async selectRecall(objectId: string) {
+  async selectRecall(
+    objectId: string,
+    kind?: "object" | "transcript",
+    transcriptText?: string,
+  ) {
+    if (kind === "transcript") {
+      const fromLog = this.transcriptLog.find((t) => t.id === objectId);
+      const line = transcriptText?.trim() || fromLog?.text;
+      const when = fromLog?.timestampMs ?? Date.now();
+      const text = line
+        ? `You heard: “${line}” ${new Date(when).toLocaleString()}.`
+        : "Selected conversation line.";
+      const voice = await speak(text);
+      this.transcriptSnippet = line ?? text;
+      this.emit("voice", voice);
+      this.broadcast();
+      return {
+        ok: true as const,
+        text,
+        match: {
+          id: objectId,
+          kind: "transcript" as const,
+          phrase: line ?? "transcript",
+          label: "transcript",
+          descriptors: [],
+          lastSeenAtMs: when,
+          lastSeenLabel: new Date(when).toLocaleString(),
+          latitude: null,
+          longitude: null,
+          mapsUrl: null,
+          thumbBase64: null,
+          sightingCount: 1,
+          status: "heard",
+          transcriptText: line,
+        },
+        voice,
+      };
+    }
     const obj = this.store.getObject(objectId);
     if (!obj) return { ok: false as const, text: "That memory card is gone." };
     this.store.markRecalled(objectId, this.relay.getSession()?.sessionId ?? "dashboard");
@@ -519,6 +591,7 @@ export class SightlineApp extends EventEmitter {
     this.lastAccessRequest = null;
     this.agentStates = listDemoAgents();
     this.transcriptSnippet = "";
+    this.transcriptLog = [];
     this.mode = this.relay.getSession()?.connected ? "LIVE" : "STANDBY";
     this.broadcast();
   }
@@ -539,6 +612,7 @@ export class SightlineApp extends EventEmitter {
       lastAccessRequest: this.lastAccessRequest,
       mode: this.mode,
       transcriptSnippet: this.transcriptSnippet,
+      recentTranscripts: this.transcriptLog,
       emergencyAlert: this.emergencyService.emergencyAlert,
       locateAnything: this.locateAnythingHealth,
       guardianMode: this.guardianService.isEnabled(),

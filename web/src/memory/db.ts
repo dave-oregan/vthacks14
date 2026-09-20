@@ -447,6 +447,7 @@ export async function searchObjectsInAtlas(query: string): Promise<AtlasRecallHi
 }
 
 export interface TranscriptHit {
+  id: string;
   text: string;
   timestampMs: number;
   source: string | null;
@@ -463,40 +464,89 @@ export interface TranscriptHit {
  */
 export async function searchTranscriptsInAtlas(
   query: string,
-  limit = 5,
+  limit = 12,
 ): Promise<TranscriptHit[] | null> {
   if (!db) return null;
   const tokens = recallTokens(query);
-  if (tokens.length === 0) return [];
+  // Conversational / people queries: pull recent heard lines for Gemini / broad match.
+  const peopleQuery = isPeopleTranscriptQuery(query);
   try {
-    const ors = tokens.map((t) => ({
-      text: { $regex: `\\b${escapeRegex(t)}`, $options: "i" },
-    }));
-    const docs = await db
-      .collection("transcripts")
-      .find({ direction: "heard", $or: ors })
-      .sort({ timestampMs: -1 })
-      .limit(40)
-      .toArray();
+    let docs: Array<Record<string, unknown>> = [];
+    if (peopleQuery || tokens.length === 0) {
+      docs = await db
+        .collection("transcripts")
+        .find({ direction: "heard" })
+        .sort({ timestampMs: -1 })
+        .limit(80)
+        .toArray();
+    } else {
+      const ors = tokens.map((t) => ({
+        text: { $regex: `\\b${escapeRegex(t)}`, $options: "i" },
+      }));
+      docs = await db
+        .collection("transcripts")
+        .find({ direction: "heard", $or: ors })
+        .sort({ timestampMs: -1 })
+        .limit(40)
+        .toArray();
+    }
 
     const hits = docs.map((d) => {
       const text = String(d.text ?? "");
       return {
+        id: String(d._id),
         text,
         timestampMs: Number(d.timestampMs ?? 0),
         source: (d.source as string) ?? null,
         direction: String(d.direction ?? "heard"),
-        matchedTokens: tokens.filter((t) =>
-          new RegExp(`\\b${escapeRegex(t)}`, "i").test(text),
-        ).length,
+        matchedTokens:
+          tokens.length === 0
+            ? 1
+            : tokens.filter((t) => new RegExp(`\\b${escapeRegex(t)}`, "i").test(text)).length,
       };
     });
-    hits.sort((a, b) => b.matchedTokens - a.matchedTokens || b.timestampMs - a.timestampMs);
+    if (!peopleQuery) {
+      hits.sort((a, b) => b.matchedTokens - a.matchedTokens || b.timestampMs - a.timestampMs);
+      return hits.filter((h) => h.matchedTokens > 0).slice(0, limit);
+    }
     return hits.slice(0, limit);
   } catch (err) {
     note("transcripts", err);
     return [];
   }
+}
+
+/** Recent heard lines for "who did I meet?" style Gemini extraction. */
+export async function recentHeardTranscripts(limit = 60): Promise<TranscriptHit[]> {
+  if (!db) return [];
+  try {
+    const docs = await db
+      .collection("transcripts")
+      .find({ direction: "heard" })
+      .sort({ timestampMs: -1 })
+      .limit(limit)
+      .toArray();
+    return docs.map((d) => ({
+      id: String(d._id),
+      text: String(d.text ?? ""),
+      timestampMs: Number(d.timestampMs ?? 0),
+      source: (d.source as string) ?? null,
+      direction: String(d.direction ?? "heard"),
+      matchedTokens: 1,
+    }));
+  } catch (err) {
+    note("transcripts", err);
+    return [];
+  }
+}
+
+export function isPeopleTranscriptQuery(query: string): boolean {
+  const q = query.toLowerCase();
+  return (
+    /\bwho\b/.test(q) ||
+    /\b(met|meet|meeting|introduce|introduced|name is|named|called)\b/.test(q) ||
+    /\b(conversation|said|talked|spoke)\b/.test(q)
+  );
 }
 
 /** Live status for /api/health, so the dashboard can show the store is real. */

@@ -61,9 +61,23 @@ server.on("upgrade", (req, socket, head) => {
         }
       };
       const onVoice = (voice: unknown) => {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: "voice", payload: voice }));
-        }
+        if (ws.readyState !== ws.OPEN) return;
+        // Strip giant base64 — dashboard loads /api/voice/latest.mp3 instead.
+        const v = voice as { text?: string; ok?: boolean; audioUrl?: string; error?: string; audioBase64?: string };
+        const audioUrl =
+          v.audioUrl ||
+          (v.audioBase64 ? `/api/voice/latest.mp3?t=${Date.now()}` : undefined);
+        ws.send(
+          JSON.stringify({
+            type: "voice",
+            payload: {
+              ok: v.ok,
+              text: v.text,
+              audioUrl,
+              error: v.error,
+            },
+          }),
+        );
       };
       const onEmergency = (alert: unknown) => {
         if (ws.readyState === ws.OPEN) {

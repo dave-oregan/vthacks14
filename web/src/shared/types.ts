@@ -242,6 +242,14 @@ export interface DashboardState {
   lastAccessRequest: AgentAccessRequest | null;
   mode: string;
   transcriptSnippet: string;
+  /** Rolling live transcript log (heard / asked / spoken), newest first. */
+  recentTranscripts: Array<{
+    id: string;
+    direction: "heard" | "asked" | "spoken";
+    text: string;
+    timestampMs: number;
+    source?: string | null;
+  }>;
   emergencyAlert: EmergencyAlert | null;
   locateAnything: {
     configured: boolean;

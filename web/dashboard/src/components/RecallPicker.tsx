@@ -1,5 +1,6 @@
 export type RecallMatch = {
   id: string;
+  kind?: "object" | "transcript";
   phrase: string;
   label: string;
   descriptors: string[];
@@ -11,6 +12,8 @@ export type RecallMatch = {
   thumbBase64: string | null;
   sightingCount: number;
   status: string;
+  transcriptText?: string;
+  transcriptSource?: string | null;
 };
 
 export function RecallPicker({
@@ -24,6 +27,9 @@ export function RecallPicker({
   onPick: (m: RecallMatch) => void;
   onClose: () => void;
 }) {
+  const hasTranscripts = matches.some((m) => m.kind === "transcript");
+  const hasObjects = matches.some((m) => (m.kind ?? "object") === "object");
+
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -33,7 +39,12 @@ export function RecallPicker({
               Recall matches
             </div>
             <div className="modal-sub">
-              {matches.length} remembered for “{query.trim()}” — tap one to open last-seen map
+              {matches.length} remembered for “{query.trim()}”
+              {hasObjects && hasTranscripts
+                ? " — objects & conversations"
+                : hasTranscripts
+                  ? " — tap a conversation line"
+                  : " — tap one to open last-seen map"}
             </div>
           </div>
           <button className="btn" type="button" onClick={onClose}>
@@ -41,31 +52,41 @@ export function RecallPicker({
           </button>
         </div>
         <div className="modal-list">
-          {matches.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              className="recall-card"
-              onClick={() => onPick(m)}
-            >
-              {m.thumbBase64 ? (
-                <img src={`data:image/jpeg;base64,${m.thumbBase64}`} alt="" />
-              ) : (
-                <div className="recall-thumb-empty" />
-              )}
-              <div className="recall-meta">
-                <strong>{m.phrase}</strong>
-                <span>
-                  {m.status} · ×{m.sightingCount} · {m.lastSeenLabel}
-                </span>
-                <span className="recall-coords">
-                  {m.latitude != null && m.longitude != null
-                    ? `${m.latitude.toFixed(5)}, ${m.longitude.toFixed(5)}`
-                    : "no GPS yet"}
-                </span>
-              </div>
-            </button>
-          ))}
+          {matches.map((m) => {
+            const isTx = m.kind === "transcript";
+            return (
+              <button
+                key={`${m.kind ?? "object"}:${m.id}`}
+                type="button"
+                className={`recall-card ${isTx ? "recall-card--transcript" : ""}`}
+                onClick={() => onPick(m)}
+              >
+                {m.thumbBase64 ? (
+                  <img src={`data:image/jpeg;base64,${m.thumbBase64}`} alt="" />
+                ) : (
+                  <div className={`recall-thumb-empty ${isTx ? "recall-thumb-empty--tx" : ""}`}>
+                    {isTx ? "TX" : ""}
+                  </div>
+                )}
+                <div className="recall-meta">
+                  <strong>{m.phrase}</strong>
+                  <span>
+                    {isTx ? "conversation" : m.status} · {m.lastSeenLabel}
+                    {!isTx ? ` · ×${m.sightingCount}` : ""}
+                  </span>
+                  <span className="recall-coords">
+                    {isTx
+                      ? m.transcriptText && m.transcriptText !== m.phrase
+                        ? m.transcriptText
+                        : m.descriptors.filter(Boolean).slice(0, 2).join(" · ") || "heard"
+                      : m.latitude != null && m.longitude != null
+                        ? `${m.latitude.toFixed(5)}, ${m.longitude.toFixed(5)}`
+                        : "no GPS yet"}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

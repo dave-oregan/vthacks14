@@ -2,8 +2,20 @@ import { useEffect, useState } from "react";
 import {
   subscribeVoice,
   setVoiceMuted,
+  unlockAudio,
+  playVoice,
   type VoiceStatus,
 } from "../voice/voicePlayer";
+
+function enableSound() {
+  unlockAudio();
+  // Replay last clip (if any) so Enable sound is an audible smoke test.
+  playVoice({
+    ok: true,
+    text: "Sound enabled.",
+    audioUrl: `/api/voice/latest.mp3?t=${Date.now()}`,
+  });
+}
 
 /**
  * Caption strip for SIGHTLINE's voice. Shows the last thing it said, so the
@@ -19,13 +31,33 @@ export function VoiceIndicator() {
   useEffect(() => {
     if (!v?.lastText) return;
     setVisible(true);
-    const t = setTimeout(() => setVisible(false), 9000);
+    const t = setTimeout(() => setVisible(false), 12000);
     return () => clearTimeout(t);
   }, [v?.lastText, v?.lastAtMs]);
 
-  if (!v || !v.lastText || !visible) return null;
+  const blocked = Boolean(v?.lastError);
+  const needsArm = v && !v.armed && !v.muted;
 
-  const blocked = Boolean(v.lastError);
+  // Always show an enable-sound chip until the browser allows playback.
+  if (needsArm && !visible) {
+    return (
+      <button
+        type="button"
+        className="voice-cap voice-cap--blocked voice-cap--arm"
+        onClick={enableSound}
+      >
+        <span className="voice-cap-icon" aria-hidden="true">
+          🔇
+        </span>
+        <div className="voice-cap-copy">
+          <span className="voice-cap-kicker">Sound blocked</span>
+          <p className="voice-cap-text">Click to enable SIGHTLINE voice alerts</p>
+        </div>
+      </button>
+    );
+  }
+
+  if (!v || !v.lastText || !visible) return null;
 
   return (
     <div
@@ -40,7 +72,14 @@ export function VoiceIndicator() {
           {v.muted ? "SIGHTLINE (muted)" : v.speaking ? "SIGHTLINE speaking" : "SIGHTLINE said"}
         </span>
         <p className="voice-cap-text">{v.lastText}</p>
-        {blocked && <p className="voice-cap-err">{v.lastError}</p>}
+        {blocked && (
+          <p className="voice-cap-err">
+            {v.lastError}{" "}
+            <button type="button" className="voice-cap-retry" onClick={enableSound}>
+              Enable sound
+            </button>
+          </p>
+        )}
       </div>
       <button
         type="button"
