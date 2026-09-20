@@ -4,6 +4,7 @@ import type { SightlineApp } from "../app.js";
 import { objectWithThumb } from "../app.js";
 import { config } from "../config.js";
 import { buildLinkInfo } from "../link/linkInfo.js";
+import { mongoStatus, recentPersistedEvents } from "../memory/db.js";
 
 export function createApiRouter(app: SightlineApp) {
   const router = express.Router();
@@ -20,7 +21,15 @@ export function createApiRouter(app: SightlineApp) {
       locateAnything: Boolean(config.locateAnythingUrl),
       visionMode: config.visionMode,
       elevenlabs: Boolean(config.elevenLabsApiKey),
+      mongo: mongoStatus(),
     });
+  });
+
+  // Reads the timeline back out of MongoDB Atlas (not the in-memory store),
+  // which is what proves the persistence layer round-trips.
+  router.get("/mongo/events", async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 25, 200);
+    res.json({ status: mongoStatus(), events: await recentPersistedEvents(limit) });
   });
 
   router.get("/link", async (_req, res) => {

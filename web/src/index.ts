@@ -8,6 +8,7 @@ import { SightlineApp } from "./app.js";
 import { createApiRouter } from "./api/routes.js";
 import { startBonjourAdvertisement } from "./link/bonjour.js";
 import { listLanIPv4, preferredLanIP } from "./link/lanAddresses.js";
+import { connectDatabases, closeDatabases, loadPersistedState } from "./memory/db.js";
 
 const appCore = new SightlineApp();
 const expressApp = express();
@@ -84,6 +85,19 @@ server.on("upgrade", (req, socket, head) => {
   socket.destroy();
 });
 
+// Non-blocking on purpose: Atlas connects in the background so flaky venue
+// wifi can never delay the server coming up. Once connected, the previous
+// session's object memory and timeline are restored into the live store.
+void connectDatabases().then(async () => {
+  const persisted = await loadPersistedState();
+  if (persisted && (persisted.objects.length || persisted.events.length)) {
+    appCore.store.hydrate(persisted.objects, persisted.events);
+    console.log(
+      `[db] restored ${persisted.objects.length} objects and ${persisted.events.length} events from Atlas`,
+    );
+  }
+});
+
 server.listen(config.port, config.host, () => {
   startBonjourAdvertisement();
   const preferred = preferredLanIP();
@@ -102,3 +116,15 @@ server.listen(config.port, config.host, () => {
   console.log(`  Bonjour:          _sightline._tcp (SIGHTLINE Mission Control)`);
   console.log(`  Link API:         http://localhost:${config.port}/api/link`);
 });
+
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n[shutdown] ${signal} received, closing SIGHTLINE...`);
+  await closeDatabases();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 2000).unref();
+}
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));

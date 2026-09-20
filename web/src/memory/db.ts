@@ -1,56 +1,298 @@
+import { MongoClient, type Collection, type Db } from "mongodb";
 import { config } from "../config.js";
+import type { MemoryObject, TimelineEvent, AgentAccessRequest } from "../shared/types.js";
 
 /**
- * Scaffolding for MongoDB Atlas and Tiger Data connections.
- * 
- * In a real environment, you'd install the mongoose package:
- * npm install mongoose
- * import mongoose from "mongoose";
+ * MongoDB Atlas persistence for SIGHTLINE.
+ *
+ * MemoryStore holds the live state in plain Maps and arrays, which is fast and
+ * never blocks the detection loop — but it dies with the process. Atlas is the
+ * only thing in this system that survives a restart, so it is not a nice-to-have
+ * mirror: it is the memory layer.
+ *
+ * Two directions:
+ *   write — every event, object and ANS decision is mirrored FIRE-AND-FORGET.
+ *           Nothing in the live loop ever awaits Atlas. If the cluster is slow,
+ *           down, or unreachable on venue wifi, the demo is unaffected.
+ *   read  — on startup we rehydrate the in-memory store from Atlas, so killing
+ *           and restarting the backend does not lose the session's memory.
+ *
+ * Nothing here ever throws into a caller.
  */
 
-export async function connectDatabases() {
-  if (config.mongoUri) {
-    console.log("[DB] Connecting to MongoDB Atlas...");
-    // Example:
-    // await mongoose.connect(config.mongoUri);
-    console.log("[DB] MongoDB Atlas connected successfully.");
-  } else {
-    console.warn("[DB] No MONGO_URI provided. Skipping MongoDB connection.");
-  }
+const DB_NAME = "sightline";
 
-  if (config.tigerDataUri) {
-    console.log("[DB] Connecting to Tiger Data...");
-    // Initialize Tiger Data connection here
-    console.log("[DB] Tiger Data connected successfully.");
-  } else {
-    console.warn("[DB] No TIGER_DATA_URI provided. Skipping Tiger Data connection.");
+let client: MongoClient | null = null;
+let db: Db | null = null;
+
+const counts = { events: 0, objects: 0, agents: 0, failures: 0 };
+let lastError: string | null = null;
+let connectedAt: number | null = null;
+let restored = { objects: 0, events: 0 };
+
+/** Documents use the same uuid the in-memory store uses, not ObjectIds. */
+interface WithStringId {
+  _id: string;
+}
+type EventDoc = WithStringId & Record<string, unknown>;
+type ObjectDoc = WithStringId & Record<string, unknown>;
+type AgentDoc = WithStringId & Record<string, unknown>;
+
+/** Strip credentials out of a mongodb+srv URI so we can log it safely. */
+function redactUri(uri: string): string {
+  try {
+    const u = new URL(uri);
+    u.password = "";
+    u.username = u.username ? "***" : "";
+    return `${u.protocol}//${u.username ? "***@" : ""}${u.host}${u.pathname}`;
+  } catch {
+    return "(unparseable uri)";
   }
 }
 
-// ==========================================
-// Schemas (Enforcing ISO-8601 timestamps and correlationIds)
-// ==========================================
+function events(): Collection<EventDoc> | null {
+  return db ? db.collection<EventDoc>("events") : null;
+}
 
-export const EventSchema = {
-  name: "Event",
-  fields: {
-    correlationId: { type: "String", required: true }, // Links to Vitals/Motion data
-    timestampIso: { type: "String", required: true },  // e.g. new Date().toISOString()
-    timestampMs: { type: "Number", required: true },
-    type: { type: "String", required: true },
-    missionId: { type: "String" },
-    severity: { type: "String", enum: ["info", "warn", "error"], default: "info" },
-    description: { type: "String" },
+export async function connectDatabases(): Promise<void> {
+  if (!config.mongoUri) {
+    console.warn("[db] MONGO_URI not set - running in-memory only, state is lost on restart");
+    return;
   }
-};
 
-export const VitalsSchema = {
-  name: "Vitals",
-  fields: {
-    correlationId: { type: "String", required: true }, // Links to Event
-    timestampIso: { type: "String", required: true },
-    timestampMs: { type: "Number", required: true },
-    heartRate: { type: "Number" },
-    motionImpactScore: { type: "Number" }
+  try {
+    client = new MongoClient(config.mongoUri, {
+      serverSelectionTimeoutMS: 6000,
+      connectTimeoutMS: 6000,
+      retryWrites: true,
+      appName: "sightline-backend",
+    });
+    await client.connect();
+    await client.db(DB_NAME).command({ ping: 1 });
+    db = client.db(DB_NAME);
+    connectedAt = Date.now();
+
+    await Promise.all([
+      db.collection("events").createIndex({ timestampMs: -1 }),
+      db.collection("events").createIndex({ sessionId: 1, timestampMs: -1 }),
+      db.collection("events").createIndex({ type: 1, timestampMs: -1 }),
+      db.collection("objects").createIndex({ canonicalLabel: 1 }),
+      db.collection("objects").createIndex({ lastSeenAtMs: -1 }),
+      db.collection("objects").createIndex({ descriptors: 1 }),
+      db.collection("agent_requests").createIndex({ timestampMs: -1 }),
+    ]);
+
+    console.log(`[db] MongoDB Atlas connected -> ${DB_NAME} @ ${redactUri(config.mongoUri)}`);
+  } catch (err) {
+    lastError = err instanceof Error ? err.message : String(err);
+    console.warn(`[db] MongoDB unavailable, continuing in-memory only: ${lastError}`);
+    try {
+      await client?.close();
+    } catch {
+      /* ignore */
+    }
+    client = null;
+    db = null;
   }
-};
+
+  if (config.tigerDataUri) {
+    console.log("[db] TIGER_DATA_URI present (time-series store not wired in this build)");
+  }
+}
+
+function note(kind: keyof typeof counts, err: unknown): void {
+  counts.failures += 1;
+  const msg = err instanceof Error ? err.message : String(err);
+  lastError = `${kind}: ${msg}`;
+  if (counts.failures <= 3) console.warn(`[db] write failed (${kind}): ${msg}`);
+}
+
+export function mirrorEvent(event: TimelineEvent): void {
+  const coll = events();
+  if (!coll) return;
+  const ms = Number(event.timestampMs ?? Date.now());
+  void coll
+    .insertOne({
+      _id: event.id,
+      correlationId: event.sessionId ?? "unknown",
+      timestampMs: ms,
+      timestampIso: new Date(ms).toISOString(),
+      type: event.type,
+      sessionId: event.sessionId ?? null,
+      missionId: event.missionId ?? null,
+      severity: event.severity ?? "info",
+      subjectObjectId: event.subjectObjectId ?? null,
+      description: event.description,
+      frameRef: event.frameRef ?? null,
+      location: event.location ?? null,
+      mirroredAt: new Date(),
+    })
+    .then(() => {
+      counts.events += 1;
+    })
+    .catch((err) => {
+      if ((err as { code?: number })?.code === 11000) return;
+      note("events", err);
+    });
+}
+
+const lastObjectMirrorMs = new Map<string, number>();
+const OBJECT_MIRROR_THROTTLE_MS = 5000;
+
+/**
+ * Upsert an object memory card. The JPEG thumbnail is deliberately NOT sent -
+ * it is large, and it is a frame of someone's room.
+ */
+export function mirrorObject(object: MemoryObject): void {
+  if (!db) return;
+  const now = Date.now();
+  const prev = lastObjectMirrorMs.get(object.id);
+  const stateful = object.status !== "observed";
+  if (!stateful && prev !== undefined && now - prev < OBJECT_MIRROR_THROTTLE_MS) return;
+  lastObjectMirrorMs.set(object.id, now);
+
+  void db
+    .collection<ObjectDoc>("objects")
+    .updateOne(
+      { _id: object.id },
+      {
+        $set: {
+          canonicalLabel: object.canonicalLabel,
+          displayName: object.displayName,
+          descriptors: object.descriptors,
+          lastSeenAtMs: object.lastSeenAtMs,
+          lastSeenIso: new Date(object.lastSeenAtMs).toISOString(),
+          lastLocation: object.lastLocation ?? null,
+          lastBBox: object.lastBBox ?? null,
+          lastConfidence: object.lastConfidence,
+          sightingCount: object.sightingCount,
+          sessionId: object.sessionId,
+          status: object.status,
+          mirroredAt: new Date(),
+        },
+        $setOnInsert: {
+          firstSeenAtMs: object.firstSeenAtMs,
+          firstSeenIso: new Date(object.firstSeenAtMs).toISOString(),
+        },
+      },
+      { upsert: true },
+    )
+    .then(() => {
+      counts.objects += 1;
+    })
+    .catch((err) => note("objects", err));
+}
+
+/** Audit trail for the ANS trust layer: who asked, for what, and the verdict. */
+export function mirrorAgentRequest(req: AgentAccessRequest): void {
+  if (!db) return;
+  void db
+    .collection<AgentDoc>("agent_requests")
+    .insertOne({
+      _id: req.id,
+      agentAnsName: req.agentAnsName,
+      requestedScopes: req.requestedScopes,
+      missionId: req.missionId ?? null,
+      verificationStatus: req.verificationStatus,
+      decision: req.decision,
+      timestampMs: req.timestampMs,
+      timestampIso: new Date(req.timestampMs).toISOString(),
+      mirroredAt: new Date(),
+    })
+    .then(() => {
+      counts.agents += 1;
+    })
+    .catch((err) => {
+      if ((err as { code?: number })?.code === 11000) return;
+      note("agents", err);
+    });
+}
+
+/**
+ * Read the previous session's memory back out of Atlas. This is what makes the
+ * database load-bearing rather than decorative: kill the backend mid-demo and
+ * the object memory and timeline come back.
+ */
+export async function loadPersistedState(): Promise<{
+  objects: MemoryObject[];
+  events: TimelineEvent[];
+} | null> {
+  if (!db) return null;
+  try {
+    const [objDocs, evDocs] = await Promise.all([
+      db.collection("objects").find({}).sort({ lastSeenAtMs: -1 }).limit(200).toArray(),
+      db.collection("events").find({}).sort({ timestampMs: -1 }).limit(200).toArray(),
+    ]);
+
+    const objects = objDocs.map((d) => ({
+      id: String(d._id),
+      canonicalLabel: String(d.canonicalLabel ?? ""),
+      displayName: String(d.displayName ?? d.canonicalLabel ?? ""),
+      descriptors: Array.isArray(d.descriptors) ? (d.descriptors as string[]) : [],
+      firstSeenAtMs: Number(d.firstSeenAtMs ?? d.lastSeenAtMs ?? 0),
+      lastSeenAtMs: Number(d.lastSeenAtMs ?? 0),
+      lastLocation: (d.lastLocation ?? null) as MemoryObject["lastLocation"],
+      lastFrameThumbJpeg: null,
+      lastBBox: (d.lastBBox ?? null) as MemoryObject["lastBBox"],
+      lastConfidence: Number(d.lastConfidence ?? 0),
+      sightingCount: Number(d.sightingCount ?? 1),
+      sessionId: String(d.sessionId ?? "restored"),
+      status: String(d.status ?? "observed") as MemoryObject["status"],
+    })) as MemoryObject[];
+
+    const restoredEvents = evDocs.map((d) => ({
+      id: String(d._id),
+      type: d.type,
+      timestampMs: Number(d.timestampMs ?? 0),
+      sessionId: (d.sessionId ?? undefined) as string | undefined,
+      missionId: (d.missionId ?? undefined) as string | undefined,
+      severity: (d.severity ?? "info") as TimelineEvent["severity"],
+      subjectObjectId: (d.subjectObjectId ?? undefined) as string | undefined,
+      description: String(d.description ?? ""),
+      frameRef: (d.frameRef ?? undefined) as string | undefined,
+      location: (d.location ?? null) as TimelineEvent["location"],
+    })) as TimelineEvent[];
+
+    restored = { objects: objects.length, events: restoredEvents.length };
+    return { objects, events: restoredEvents };
+  } catch (err) {
+    note("events", err);
+    return null;
+  }
+}
+
+/** Live status for /api/health, so the dashboard can show the store is real. */
+export function mongoStatus() {
+  return {
+    enabled: Boolean(config.mongoUri),
+    connected: db !== null,
+    database: db ? DB_NAME : null,
+    cluster: config.mongoUri ? redactUri(config.mongoUri) : null,
+    connectedAt,
+    written: { ...counts },
+    restored: { ...restored },
+    lastError,
+  };
+}
+
+/** Read the timeline back out of Atlas (proves the round-trip, not just the write). */
+export async function recentPersistedEvents(limit = 25): Promise<unknown[]> {
+  const coll = events();
+  if (!coll) return [];
+  try {
+    return await coll.find({}).sort({ timestampMs: -1 }).limit(limit).toArray();
+  } catch (err) {
+    note("events", err);
+    return [];
+  }
+}
+
+export async function closeDatabases(): Promise<void> {
+  try {
+    await client?.close();
+  } catch {
+    /* ignore */
+  }
+  client = null;
+  db = null;
+}

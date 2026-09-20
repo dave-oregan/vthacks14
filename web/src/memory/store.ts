@@ -1,5 +1,6 @@
 import { v4 as uuid } from "uuid";
 import type { GeoPoint, MemoryObject, Mission, TimelineEvent, AgentAccessRequest, BBox } from "../shared/types.js";
+import { mirrorEvent, mirrorObject, mirrorAgentRequest } from "./db.js";
 
 function haversineMeters(a: GeoPoint, b: GeoPoint): number {
   const R = 6371000;
@@ -18,6 +19,13 @@ export class MemoryStore {
   private missions: Mission[] = [];
 
   constructor(dbPath?: string) {}
+
+  /** Restore a previous session's memory (from Atlas) into the live store. */
+  hydrate(objects: MemoryObject[], events: TimelineEvent[]): void {
+    for (const o of objects) if (!this.objects.has(o.id)) this.objects.set(o.id, o);
+    const known = new Set(this.events.map((e) => e.id));
+    for (const e of events) if (!known.has(e.id)) this.events.push(e);
+  }
 
   resetDemo(): void {
     this.objects.clear();
@@ -43,6 +51,7 @@ export class MemoryStore {
       existing.sightingCount++;
       existing.sessionId = input.sessionId;
       if (existing.status === "left_behind") existing.status = "observed";
+      mirrorObject(existing);
       return { object: existing, isNew: false };
     }
 
@@ -55,6 +64,7 @@ export class MemoryStore {
       sessionId: input.sessionId, status: "observed"
     };
     this.objects.set(id, newObj);
+    mirrorObject(newObj);
     return { object: newObj, isNew: true };
   }
 
@@ -73,6 +83,9 @@ export class MemoryStore {
   addEvent(partial: Omit<TimelineEvent, "id"> & { id?: string }): TimelineEvent {
     const event: TimelineEvent = { id: partial.id ?? uuid(), type: partial.type, timestampMs: partial.timestampMs, sessionId: partial.sessionId, missionId: partial.missionId, severity: partial.severity ?? "info", subjectObjectId: partial.subjectObjectId, description: partial.description, frameRef: partial.frameRef, location: partial.location ?? null };
     this.events.push(event);
+    // Fire-and-forget: in-memory above is the live state, Atlas is what
+    // survives a restart. The detection loop never waits on the network.
+    mirrorEvent(event);
     return event;
   }
 
@@ -91,7 +104,7 @@ export class MemoryStore {
     if (m) m.status = status;
   }
   listMissions(): Mission[] { return [...this.missions].sort((a, b) => b.createdAtMs - a.createdAtMs); }
-  saveAgentRequest(req: AgentAccessRequest): void {}
+  saveAgentRequest(req: AgentAccessRequest): void { mirrorAgentRequest(req); }
   distanceMeters(a: GeoPoint, b: GeoPoint): number { return haversineMeters(a, b); }
 
   private findBestMatch(label: string, descriptors: string[], bbox: BBox, timestampMs: number): MemoryObject | null {
