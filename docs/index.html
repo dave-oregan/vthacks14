@@ -180,6 +180,9 @@
 
       .btn {
         appearance: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         border: 1px solid var(--line-strong);
         background: var(--surface-elevated);
         color: var(--ink);
@@ -219,6 +222,18 @@
 
       .btn-primary:hover {
         background: #1a2330;
+      }
+
+      .btn-devpost {
+        background: #0e5c8a;
+        color: #ffffff;
+        border-color: #0e5c8a;
+        text-decoration: none;
+      }
+
+      .btn-devpost:hover {
+        background: #0c5078;
+        border-color: #0c5078;
       }
 
       .hint {
@@ -416,6 +431,12 @@
           <div class="panel-actions">
             <button type="button" class="btn btn-primary" id="retry-btn">Try again</button>
             <button type="button" class="btn" id="back-btn">Back to SIGHTLINE</button>
+            <a
+              class="btn btn-devpost"
+              href="https://devpost.com/software/sightline-bvhwro"
+              target="_blank"
+              rel="noopener noreferrer"
+            >DevPost</a>
           </div>
         </section>
       </main>
